@@ -17,6 +17,7 @@
     .app.sidebar-hidden{grid-template-columns:1fr;}
     .topbar{grid-column:1 / -1;display:flex;gap:8px;align-items:center;margin-bottom:8px}
     .btn{appearance:none;cursor:pointer;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);padding:8px 10px;font-size:13px}
+    .btn:disabled{background:#e9ecef;border-color:#d0d5dd;color:#9aa0ab;cursor:not-allowed}
     .pill{padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:#fff;color:#6c757d;font-size:12px}
     .sidebar{position:sticky;top:0;align-self:start;height:100vh;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px}
     .app.sidebar-hidden .sidebar{display:none;}
@@ -195,8 +196,9 @@
           <!-- GPT-OSS 코드 생성 + 진행바(바로 아래) -->
           <div class="row" style="margin-bottom:6px">
             <button id="btnGenCode" class="btn">GPT-OSS로 코드 생성</button>
+            <button id="btnGenCodeDirect" class="btn" disabled>qwen-&gt;gpt-oss 코드 바로 생성</button>
             <button id="btnLoadTop1Code" class="btn">Top-1 few-shot 코드 불러오기</button> <!-- [NEW] -->
-            <span class="pill" id="codeGenHint">VL 지시 프롬프트 + (Top-1) few-shot 텍스트 기반 전체 스크립트 생성 → <b>완료 즉시 자동 실행</b></span> <!-- [CHANGED] -->
+            <span class="pill" id="codeGenHint">VL 지시 프롬프트 + (Top-1) few-shot 텍스트 기반 전체 스크립트 생성 → <b>완료 즉시 자동 실행</b><br/>또는 Qwen SDIFF만으로 GPT-OSS 코드를 바로 받아 실행할 수 있습니다.</span> <!-- [CHANGED] -->
           </div>
           <div id="codeProgress" class="progress-inline" style="margin-top:-2px">
             <div class="bar"><i id="codeProgressBar"></i><span class="label" id="codeProgressLabel">0%</span></div>
@@ -284,6 +286,7 @@
 
     // GPT-OSS
     const btnGenCode=$('btnGenCode');
+    const btnGenCodeDirect=$('btnGenCodeDirect');
     const btnLoadTop1Code=$('btnLoadTop1Code'); // [NEW]
     const assistInput=$('assistInput'), btnAssistSend=$('btnAssistSend'), assistLog=$('assistLog');
 
@@ -301,6 +304,80 @@
     let IMAGES=[], VIEW=[], CURRENT=null, PptId=null;
     let statusPoller=null;
     let LAST_SDIFF=null; // [NEW] 최근 생성된 SDIFF 저장
+
+    function refreshStructuredDiffState(){
+      const redLines = LAST_SDIFF && LAST_SDIFF.red && Array.isArray(LAST_SDIFF.red.lines) ? LAST_SDIFF.red.lines.length : 0;
+      const greenLines = LAST_SDIFF && LAST_SDIFF.green && Array.isArray(LAST_SDIFF.green.lines) ? LAST_SDIFF.green.lines.length : 0;
+      const hasSDiff = (redLines + greenLines) > 0;
+      if(btnGenCodeDirect){
+        btnGenCodeDirect.disabled = !hasSDiff;
+      }
+    }
+
+    function normalizeOrientation(line){
+      if(!line || typeof line !== 'object') return '-';
+      const raw = line.orientation;
+      if(raw){
+        const lower = String(raw).toLowerCase();
+        if(lower.includes('horizontal')) return 'horizontal';
+        if(lower.includes('vertical')) return 'vertical';
+        if(lower.includes('width')) return 'horizontal';
+        if(lower.includes('height')) return 'vertical';
+        if(lower.includes('diagonal') || lower.includes('oblique')) return 'diagonal';
+      }
+      const angle = Number(line.angle_deg);
+      if(!Number.isNaN(angle) && Number.isFinite(angle)){
+        let a = angle % 360;
+        if(a < 0) a += 360;
+        const tol = 15;
+        const close = (target)=>{
+          const diff = Math.abs(a - target);
+          const wrap = Math.abs(diff - 360);
+          return Math.min(diff, wrap) <= tol;
+        };
+        if(close(0) || close(180) || close(360)) return 'horizontal';
+        if(close(90) || close(270)) return 'vertical';
+        return 'diagonal';
+      }
+      return raw ? String(raw) : '-';
+    }
+
+    function summarizeStructuredDiff(structured){
+      if(!structured || typeof structured !== 'object') return '';
+      const redLines = ((structured.red||{}).lines)||[];
+      const greenLines = ((structured.green||{}).lines)||[];
+      const lines=[];
+      const pad=(idx)=>String(idx).padStart(2,'0');
+      const fmt=(val)=>{
+        if(val===0 || val===false) return String(val);
+        return val ? String(val) : '-';
+      };
+
+      lines.push('[RED GUIDES]');
+      if(redLines.length===0){
+        lines.push('(none)');
+      }else{
+        redLines.forEach((ln, i)=>{
+          if(!ln || typeof ln!=='object') return;
+          lines.push(`${pad(i+1)}. id=${fmt(ln.id)}, orientation=${normalizeOrientation(ln)}, hint=${fmt(ln.detected_class_hint)}`);
+        });
+      }
+
+      lines.push('');
+      lines.push('[GREEN MEASURES]');
+      if(greenLines.length===0){
+        lines.push('(none)');
+      }else{
+        greenLines.forEach((ln, i)=>{
+          if(!ln || typeof ln!=='object') return;
+          lines.push(`${pad(i+1)}. id=${fmt(ln.id)}, orientation=${normalizeOrientation(ln)}, semantic=${fmt(ln.semantic)}, start_hint=${fmt(ln.detected_class_hint_start)}, end_hint=${fmt(ln.detected_class_hint_end)}, paired_red_id=${fmt(ln.paired_red_id)}`);
+        });
+      }
+
+      return lines.join('\n');
+    }
+
+    refreshStructuredDiffState();
 
     // ---------- 진행바: PPT ----------
     let pptTimer=null, pptVal=0;
@@ -418,6 +495,9 @@
 
     function setSelected(name){
       CURRENT=name; PptId = PptId || null;
+      LAST_SDIFF = null;
+      structuredBox.textContent = '{ }';
+      refreshStructuredDiffState();
       selName.textContent=`파일: ${name}`;
       const mergeURL = `/get_image/${encodeURIComponent(name)}`;
       imgMerge.src = mergeURL; imgMerge.style.display='block'; noMerge.style.display='none';
@@ -525,8 +605,9 @@
         const data=await res.json();
         if(data.ok){
           pptPrompt.value=data.text||'';
-          structuredBox.textContent = JSON.stringify(data.structured_diff||LAST_SDIFF||{}, null, 2);
           if(data.structured_diff) LAST_SDIFF = data.structured_diff; // 최신 반영
+          structuredBox.textContent = JSON.stringify(LAST_SDIFF || data.structured_diff || {}, null, 2);
+          refreshStructuredDiffState();
           PptId = data.ppt_id || null;
           $('btnFollow').disabled=false;
           if(data.used_fewshots) renderFewshots(data.used_fewshots);
@@ -551,8 +632,9 @@
         const r = await fetch('/vl/sdiff_qwen', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
         const d = await r.json();
         if(d.ok){
-          LAST_SDIFF = d.structured_diff || {};
-          structuredBox.textContent = JSON.stringify(LAST_SDIFF, null, 2);
+          LAST_SDIFF = d.structured_diff || null;
+          structuredBox.textContent = JSON.stringify(LAST_SDIFF || {}, null, 2);
+          refreshStructuredDiffState();
           pptLog.style.display='none'; pptFinish();
         }else{
           pptLog.textContent='오류: '+(d.error||'unknown'); pptFail();
@@ -577,8 +659,9 @@
         const data=await res.json();
         if(data.ok){
           pptPrompt.value=data.text||'';
-          structuredBox.textContent = JSON.stringify(data.structured_diff||LAST_SDIFF||{}, null, 2);
           if(data.structured_diff) LAST_SDIFF = data.structured_diff;
+          structuredBox.textContent = JSON.stringify(LAST_SDIFF || data.structured_diff || {}, null, 2);
+          refreshStructuredDiffState();
           if(data.used_fewshots) renderFewshots(data.used_fewshots);
           pptLog.style.display='none'; pptFinish();
         }else{
@@ -624,6 +707,44 @@
         logBox.textContent = '요청 실패: ' + e;
         $('codeProgressLabel').textContent = '실패';
         codeFail();
+      }
+    });
+
+    btnGenCodeDirect.addEventListener('click', async ()=>{
+      if(!CURRENT) return alert('파일을 먼저 선택하세요.');
+      if(!LAST_SDIFF){ alert('먼저 Qwen으로 STRUCTURED_DIFF를 생성하세요.'); return; }
+      const summary = summarizeStructuredDiff(LAST_SDIFF);
+      if(!summary.trim()){ alert('STRUCTURED_DIFF 정보가 비어 있습니다.'); return; }
+
+      codeStart();
+      codeProgress.style.display='block';
+      $('codeProgressLabel').textContent = '10% · SDIFF 기반 코드 생성 중…';
+      logBox.style.display='block'; logBox.textContent='GPT-OSS(SDIFF) 코드 생성 중...';
+      btnGenCodeDirect.disabled = true;
+
+      try{
+        const payload = { image_name: CURRENT, structured_diff_text: summary };
+        const res = await fetch('/gptoss/generate_from_sdiff', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if(data.ok && data.code && data.code.trim()){
+          taCode.value = data.code;
+          logBox.textContent = '코드가 생성되었습니다. 자동으로 실행합니다...';
+          $('codeProgressLabel').textContent = '실행 준비 중…';
+          await runMeasure(true);
+        }else{
+          logBox.textContent = '코드 생성 실패: ' + (data.error||'');
+          $('codeProgressLabel').textContent = '실패';
+          codeFail();
+        }
+      }catch(e){
+        logBox.textContent = '요청 실패: ' + e;
+        $('codeProgressLabel').textContent = '실패';
+        codeFail();
+      }finally{
+        refreshStructuredDiffState();
       }
     });
 
