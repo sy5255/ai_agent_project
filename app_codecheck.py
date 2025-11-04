@@ -2793,6 +2793,39 @@ def _dump_debug(stem: str, fname: str, content: str):
     except Exception as e:
         log.warning(f"[debug] write failed {fname}: {e}")
 
+
+def _sanitize_structured_diff_semantics(structured_diff_text: str) -> Tuple[str, bool, bool]:
+    """Parse SDIFF JSON text and strip out geometric fields while keeping semantic hints."""
+    try:
+        parsed = json.loads(structured_diff_text)
+    except Exception:
+        return structured_diff_text, False, False
+
+    geom_keys = {"endpoints", "length_px", "angle_deg", "length_um"}
+    removed = False
+
+    def _strip(obj: Any):
+        nonlocal removed
+        if isinstance(obj, dict):
+            for key in list(obj.keys()):
+                if key in geom_keys:
+                    obj.pop(key, None)
+                    removed = True
+                    continue
+                _strip(obj[key])
+        elif isinstance(obj, list):
+            for item in obj:
+                _strip(item)
+
+    _strip(parsed)
+
+    try:
+        sanitized = json.dumps(parsed, ensure_ascii=False, indent=2)
+    except Exception:
+        return structured_diff_text, removed, False
+    return sanitized, removed, True
+
+
 # [NEW] SDIFF -> GPT-OSS 전용 Invoker
 def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_texts: List[str]) -> str:
     """
@@ -2805,14 +2838,14 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_
     # [CRITICAL] SDIFF 직접 주입용 시스템 프롬프트 (방화벽)
     sys_msg = (
         "너는 이미지를 분석하는 파이썬 측정 스크립트 생성 전문가다. "
-        "너의 유일한 임무는 '지시 프롬프트'(guide_text)에 서술된 **[STRUCTURED_DIFF HINT]**를 **'해석'**하여, "
+        "너의 유일한 임무는 '지시 프롬프트'(guide_text)에 서술된 **[STRUCTURED_DIFF SEMANTIC HINTS]**를 **'해석'**하여, "
         "`--mask_path` 이미지 위에서 실행하는 **알고리즘 코드(예: cv2.findContours, np.where)**로 구현하는 것이다.\\n\\n"
         
         "## [매우 중요] SDIFF 사용 규칙 (보안):\\n"
-        "1. [STRUCTURED_DIFF HINT]는 **'시맨틱 힌트'**로만 제공된다.\\n"
+        "1. [STRUCTURED_DIFF SEMANTIC HINTS]는 **'시맨틱 힌트'**로만 제공된다.\\n"
         "2. 너는 `detected_class_hint_start/end`, `paired_red_id`, `semantic` 같은 **'힌트'**만 참조해야 한다.\\n"
         "3. **`endpoints`, `length_px`, `angle_deg`** 같은 기하학적 정보는 **절대로 사용해서는 안 된다.** (치팅 금지)\\n"
-        "4. 너의 임무는 이 '힌트'를 바탕으로 `cv2.findContours`, `np.where` 등을 사용해 기하학적 정보를 **'처음부터 재계산(re-calculate)'**하는 것이다.\\n"
+        "4. 좌표 값은 제거되었으며, 반드시 마스크 기반 알고리즘으로 기하 정보를 **'처음부터 재계산(re-calculate)'**해야 한다.\\n"
         "5. 'Few-Shot 코드'에 `load_sdiff`가 있더라도 무시하고, 이 규칙을 최우선으로 하라.\\n\\n"
 
         "## [매우 중요] 클래스 값(class_val) 처리 규칙:\\n"
@@ -2861,12 +2894,14 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
 
         image_name = payload.get("image_name")
         # [NEW] Llama4 프롬프트 대신 SDIFF(json 텍스트)를 받음
-        structured_diff_text = payload.get("structured_diff_text", "") 
+        structured_diff_text = payload.get("structured_diff_text", "")
 
         if not image_name or not structured_diff_text:
             return JSONResponse({"ok": False, "error": "image_name and structured_diff_text required"}, status_code=200)
 
         stem = Path(_normalize_name(image_name)).stem
+
+        structured_diff_semantic_text, geom_removed, geom_parsed = _sanitize_structured_diff_semantics(structured_diff_text)
 
         # --- 1. `meta_summary` (클래스 정보) 재조회 (Failsafe용) ---
         meta_sum = {}
@@ -2905,8 +2940,16 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
         # (A) SDIFF 힌트 주입
         full_prompt_list.append("Generate a Python script based on the [STRUCTURED_DIFF] hint below.")
         full_prompt_list.append("Your code MUST be a traditional OpenCV/Numpy algorithm (e.g., cv2.findContours, np.where).")
-        full_prompt_list.append("\n## [STRUCTURED_DIFF HINT]\n")
-        full_prompt_list.append(structured_diff_text) # SDIFF JSON 텍스트
+        full_prompt_list.append("\n## [STRUCTURED_DIFF SEMANTIC HINTS]\n")
+        if geom_parsed:
+            note_line = "(All coordinate fields were removed. Recalculate geometry from the mask.)\n"
+        else:
+            note_line = (
+                "(Structured diff parsing failed server-side; raw payload forwarded. Recalculate geometry from the mask and"
+                " ignore any coordinates if they appear.)\n"
+            )
+        full_prompt_list.append(note_line)
+        full_prompt_list.append(structured_diff_semantic_text)  # 필터링된 SDIFF JSON 텍스트
 
         # (B) MASK METADATA 주입 (Failsafe 힌트)
         if meta_sum:
@@ -2929,6 +2972,13 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 debug_content.append(f"[gptoss_generate_from_sdiff log @ {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
                 debug_content.append("--- 1. SDIFF Hint + MASK METADATA (Combined) ---\n")
                 debug_content.append(full_prompt)
+                if geom_parsed:
+                    removed_msg = "endpoints, length_px, angle_deg, length_um" if geom_removed else "(already absent)"
+                else:
+                    removed_msg = "(parse failed - raw payload forwarded)"
+                debug_content.append(
+                    f"\n[INFO] Geometry fields removed from SDIFF before prompt injection: {removed_msg}\n"
+                )
                 debug_content.append("\n\n--- 2. Few-Shot Code (Injected) ---\n")
                 if fewshot_texts:
                     debug_content.append(fewshot_texts[0])
