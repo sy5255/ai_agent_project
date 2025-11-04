@@ -452,6 +452,88 @@ def _sdiff_to_summary_text(sdiff: dict) -> str:
         txt.append(f"- rules: {rules}")
     return "\n".join(txt)
 
+
+def _structured_diff_semantic_summary(structured: dict) -> str:
+    """
+    red/green 라인의 시맨틱 힌트를 읽기 쉬운 텍스트로 요약한다.
+    좌표 대신 `detected_class_hint*`, `paired_red_id`, `orientation` 등만 노출한다.
+    """
+
+    def _norm_orientation(val: Any) -> str:
+        if not isinstance(val, str):
+            return "unknown"
+        v = val.strip().lower()
+        if v in {"h", "horizontal"}:
+            return "horizontal"
+        if v in {"v", "vertical"}:
+            return "vertical"
+        if v in {"diag", "diagonal"}:
+            return "diagonal"
+        return val.strip() or "unknown"
+
+    def _sem_val(line: Dict[str, Any], fallback: str) -> str:
+        for key in ("semantic", "semantic_role"):
+            val = line.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return fallback
+
+    def _fmt_hint(val: Any) -> str:
+        if val is None:
+            return "?"
+        return str(val)
+
+    if not isinstance(structured, dict):
+        return "- (invalid structured_diff)"
+
+    red_bucket = structured.get("red") or {}
+    green_bucket = structured.get("green") or {}
+
+    red_lines = red_bucket.get("lines") or []
+    green_lines = green_bucket.get("lines") or []
+
+    lines: List[str] = []
+
+    if red_lines:
+        lines.append("### Red Guides")
+        for ln in red_lines:
+            if not isinstance(ln, dict):
+                continue
+            rid = str(ln.get("id") or "red")
+            semantic = _sem_val(ln, "guide")
+            orientation = _norm_orientation(ln.get("orientation"))
+            details: List[str] = []
+            if "detected_class_hint" in ln:
+                details.append(f"class_hint={_fmt_hint(ln.get('detected_class_hint'))}")
+            details.append(f"orientation={orientation}")
+            lines.append(f"- {rid} ({semantic}): " + ", ".join(details))
+
+    if green_lines:
+        lines.append("### Green Measures")
+        for ln in green_lines:
+            if not isinstance(ln, dict):
+                continue
+            gid = str(ln.get("id") or "green")
+            semantic = _sem_val(ln, "measure")
+            orientation = _norm_orientation(ln.get("orientation"))
+            details = []
+            start_hint = ln.get("detected_class_hint_start")
+            end_hint = ln.get("detected_class_hint_end")
+            if start_hint is not None or end_hint is not None:
+                details.append(
+                    f"start_hint={_fmt_hint(start_hint)} → end_hint={_fmt_hint(end_hint)}"
+                )
+            anchor = ln.get("paired_red_id")
+            if anchor:
+                details.append(f"anchor={anchor}")
+            details.append(f"orientation={orientation}")
+            lines.append(f"- {gid} ({semantic}): " + ", ".join(details))
+
+    if not lines:
+        return "- (no structured diff hints)"
+
+    return "\n".join(lines)
+
 def _deg_norm(a):
     a = float(a) % 360.0
     if a < 0: a += 360.0
@@ -1363,7 +1445,8 @@ def _safe_invoke_gptoss_for_code(guide_text: str, fewshot_texts: List[str]) -> s
         "2. '지시 프롬프트'에 포함된 **[MASK METADATA]** 블록을 반드시 확인하라.\\n"
         "3. 로직을 구현할 때, **절대 `class_val=10` 같은 임의의 값을 추측하지 마라.**\\n"
         "4. '지시 프롬프트'가 'class_val'을 명시했다면 그 값을 사용하고, 명시하지 않았다면 `[MASK METADATA]`의 'classes' 리스트(예: `[30, 50, 70]`)에서 '지시 프롬프트'의 '손가락' 같은 설명과 가장 일치하는 **올바른 `class_val`을 선택**하여 코드에 사용해야 한다.\\n"
-        "5. 'few-shot 텍스트'는 **스타일과 구문 참조용**이며, '지시 프롬프트'와 충돌 시 무시해야 한다."
+        "5. 'few-shot 텍스트'는 **스타일과 구문 참조용**이며, '지시 프롬프트'와 충돌 시 무시해야 한다.\\n"
+        "6. [STRUCTURED_DIFF HINT] 섹션은 좌표가 아닌 알고리즘 힌트이며, 실제 기하는 반드시 `mask_path` 데이터에서 재계산해야 한다."
     )
     
     # [CRITICAL FIX] 
@@ -1375,6 +1458,7 @@ def _safe_invoke_gptoss_for_code(guide_text: str, fewshot_texts: List[str]) -> s
         "- out_dir에 overlay.png, measurements.csv 생성\\n"
         "- meta_utils.__wrap_load_pixel_scale_um(mask_path, meta_root)는 (umx, umy, classes, meta_path) 4개 값 반환으로 가정\\n" # <-- 수정됨
         "- draw_text 기본 False, line_thickness 기본 5 등 사용자 옵션 반영\\n"
+        "- [경고] [STRUCTURED_DIFF HINT] 섹션은 좌표가 아닌 알고리즘 힌트이며, 실제 기하는 반드시 mask_path에서 복원하세요.\\n"
         "- 절대 설명 문장 없이, 순수 파이썬 코드만 출력\\n\\n"
         "=== 지시 프롬프트 (Primary Command: Implement this Logic + Data Hints) ===\\n"
         f"{guide_text}\\n\\n"
@@ -2845,6 +2929,9 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_
         "1. [STRUCTURED_DIFF SEMANTIC HINTS]는 **'시맨틱 힌트'**로만 제공된다.\\n"
         "2. 너는 `detected_class_hint_start/end`, `paired_red_id`, `semantic` 같은 **'힌트'**만 참조해야 한다.\\n"
         "3. **`endpoints`, `length_px`, `angle_deg`** 같은 기하학적 정보는 **절대로 사용해서는 안 된다.** (치팅 금지)\\n"
+        "4. 너의 임무는 이 '힌트'를 바탕으로 `cv2.findContours`, `np.where` 등을 사용해 기하학적 정보를 **'처음부터 재계산(re-calculate)'**하는 것이다.\\n"
+        "5. 'Few-Shot 코드'에 `load_sdiff`가 있더라도 무시하고, 이 규칙을 최우선으로 하라.\\n"
+        "6. 이 [STRUCTURED_DIFF HINT] 섹션은 좌표가 아닌 알고리즘 힌트이며, 실제 기하는 반드시 `mask_path`에서 복원해야 한다.\\n\\n"
         "4. 좌표 값은 제거되었으며, 반드시 마스크 기반 알고리즘으로 기하 정보를 **'처음부터 재계산(re-calculate)'**해야 한다.\\n"
         "5. 'Few-Shot 코드'에 `load_sdiff`가 있더라도 무시하고, 이 규칙을 최우선으로 하라.\\n\\n"
 
@@ -2860,6 +2947,7 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_
         "- out_dir에 overlay.png, measurements.csv 생성\\n"
         "- meta_utils.__wrap_load_pixel_scale_um(mask_path, meta_root)는 (umx, umy, classes, meta_path) 4개 값 반환으로 가정\\n"
         "- draw_text 기본 False, line_thickness 기본 5 등 사용자 옵션 반영\\n"
+        "- [경고] [STRUCTURED_DIFF HINT] 섹션은 좌표가 아닌 알고리즘 힌트이며, 실제 기하는 반드시 mask_path에서 복원하세요.\\n"
         "- 절대 설명 문장 없이, 순수 파이썬 코드만 출력\\n\\n"
         "=== 지시 프롬프트 (SDIFF HINTS + METADATA) ===\\n"
         f"{guide_text_with_sdiff}\\n\\n"
@@ -3095,18 +3183,33 @@ async def gptoss_generate(payload: dict = Body(...)):
         except Exception as e:
             log.warning(f"[gptoss_generate] fewshot load failed: {e}")
 
-        # --- [CRITICAL FIX] 4. Qwen 원본 + Llama4 요약본 + Meta 결합 ---
+        structured_hint_body = ""
+        if isinstance(structured_diff, dict):
+            try:
+                structured_hint_body = _structured_diff_semantic_summary(structured_diff).strip()
+            except Exception as e:
+                log.warning(f"[gptoss_generate] structured diff summary failed: {e}")
+                structured_hint_body = ""
+
+        # --- [CRITICAL FIX] 4. Qwen 원본 + SDIFF 힌트 + Llama4 요약본 + Meta 결합 ---
         full_prompt_list = []
 
         # (A) [NEW] Qwen 원본(raw_text)을 '0) IMAGE SUMMARY'로 주입
-        full_prompt_list.append("## 0) IMAGE SUMMARY (Qwen's Original Analysis)\n")
+        full_prompt_list.append("## 0) IMAGE SUMMARY (Qwen's Original Analysis)")
         full_prompt_list.append(qwen_raw_text)
-        
-        # (B) Llama4의 요약본 주입
-        full_prompt_list.append("\n\n## [Llama4's Summary & Instructions]\n")
+
+        # (B) [NEW] STRUCTURED_DIFF 힌트 주입 (있을 때만)
+        if structured_hint_body:
+            full_prompt_list.append("")
+            full_prompt_list.append("## [STRUCTURED_DIFF HINT]")
+            full_prompt_list.append(structured_hint_body)
+
+        # (C) Llama4의 요약본 주입
+        full_prompt_list.append("")
+        full_prompt_list.append("## [Llama4's Summary & Instructions]")
         full_prompt_list.append(guide_text) # (Llama4의 요약본)
 
-        # (C) MASK METADATA 주입 (Failsafe 힌트)
+        # (D) MASK METADATA 주입 (Failsafe 힌트)
         if meta_sum:
             try:
                 meta_json_str = json.dumps(meta_sum, ensure_ascii=False, indent=2)
@@ -3127,8 +3230,12 @@ async def gptoss_generate(payload: dict = Body(...)):
                 debug_content = []
                 debug_content.append(f"[gptoss_generate log @ {time.strftime('%Y-%m-%d %H:%M:%S')}]\\n")
 
-                debug_content.append("--- 1. Combined Prompt (Qwen + Llama4 + Meta) ---\n")
+                debug_content.append("--- 1. Combined Prompt (Qwen + SDIFF Hint + Llama4 + Meta) ---\n")
                 debug_content.append(full_prompt) # [CHANGED]
+
+                if structured_hint_body:
+                    debug_content.append("\n\n--- 1-b. Structured Diff Hint Section ---\n")
+                    debug_content.append("## [STRUCTURED_DIFF HINT]\n" + structured_hint_body)
 
                 debug_content.append("\n\n--- 2. SDIFF-JSON (Injected) ---\n")
                 debug_content.append("(REMOVED: No longer injected directly, used for raw_text extraction)") # [CHANGED]
