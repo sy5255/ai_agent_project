@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>Measure Runner + Few-shot + 4-Image VL (Llama4/Gemma3) + GPT-OSS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#f6f7fb; --text:#212529; --muted:#6c757d;
+      --panel:#ffffff; --border:#e6e9ef; --accent:#2f5eea;
+      --active-bg:#eef3ff; --active-border:#b8c7ff; --active-strip:#5b7cff;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);
+      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,"Apple Color Emoji","Segoe UI Emoji"}
+    .app{display:grid;grid-template-columns:320px 1fr;gap:16px;padding:16px}
+    .app.sidebar-hidden{grid-template-columns:1fr;}
+    .topbar{grid-column:1 / -1;display:flex;gap:8px;align-items:center;margin-bottom:8px}
+    .btn{appearance:none;cursor:pointer;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--text);padding:8px 10px;font-size:13px}
+    .pill{padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:#fff;color:#6c757d;font-size:12px}
+    .sidebar{position:sticky;top:0;align-self:start;height:100vh;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px}
+    .app.sidebar-hidden .sidebar{display:none;}
+    .sidebar h2{margin:0 0 6px 0;font-size:16px}
+    .stats{display:flex;gap:6px;align-items:center;margin:0 0 10px 0;flex-wrap:wrap}
+    .stat{font-size:12px;border:1px solid var(--border);border-radius:999px;background:#fff;padding:4px 8px;line-height:1;cursor:pointer;user-select:none}
+    .stat.total{background:#f8f9fe}
+    .stat.done{background:#e9fbf3;border-color:#c6f2dc;color:#148e5a}
+    .stat.todo{background:#fff7e6;border-color:#ffe3b9;color:#8a5a00}
+    .search-wrap{display:flex;gap:6px;align-items:center;margin-bottom:10px}
+    .search-input{flex:1;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;background:#fff}
+    .file-list{display:flex;flex-direction:column;gap:8px}
+    .file-item{position:relative; display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:#fafbff;cursor:pointer}
+    .file-item:hover{border-color:#d8deea;background:#f4f7ff}
+    .file-item.active{border-color:var(--active-border);background:var(--active-bg);box-shadow:0 0 0 2px rgba(95,123,255,0.08) inset}
+    .file-item.active::before{content:""; position:absolute; left:0; top:6px; bottom:6px; width:4px; border-radius:3px; background:var(--active-strip)}
+    .file-name{max-width:210px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .badge{font-size:11px;border:1px solid var(--border);border-radius:999px;padding:2px 8px;background:#f3f6ff;color:#5070ff}
+    .badge.done{background:#e9fbf3;border-color:#c6f2dc;color:#148e5a}
+    .main{display:block}
+    .panel{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px}
+    .panel h3{margin:0 0 10px 0;font-size:16px;display:flex;align-items:center;justify-content:space-between}
+    .panel .section-body{margin-top:8px}
+    .img-box{position:relative;border:1px dashed var(--border);border-radius:10px;min-height:220px;display:flex;align-items:center;justify-content:center;background:#fbfcff;padding:6px}
+    .img-box img{max-width:100%;max-height:36vh;border-radius:8px;object-fit:contain}
+    .textarea{display:block;width:100%;max-width:100%;min-height:240px;border:1px solid var(--border);border-radius:10px;background:#fff;color:#212529;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.45;padding:10px;resize:vertical}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .cols-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px}
+    .legend{font-size:12px;color:#6c757d;line-height:1.6}
+    .log{white-space:pre-wrap;border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#2b2b2b;max-height:220px;overflow:auto}
+    .progress-inline{display:none;margin-top:8px}
+    .progress-inline .bar{position:relative;height:14px;background:#eef1fb;border:1px solid #d9def2;border-radius:999px;overflow:hidden}
+    .progress-inline .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#9eb2ff,#6a8bff)}
+    .progress-inline .bar .label{position:absolute;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#2b2b2b;pointer-events:none}
+    .few-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+    .few-card{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px}
+    .few-card .thumb{width:100%;height:160px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:zoom-in}
+    .few-bar{height:6px;background:#eef1fb;border:1px solid #d9def2;border-radius:999px;overflow:hidden}
+    .few-bar i{display:block;height:100%;}
+    .img-preview{position:fixed; pointer-events:none; z-index:9999; display:none;
+      border:1px solid var(--border); border-radius:10px; background:#fff; padding:6px; box-shadow:0 10px 30px rgba(0,0,0,.15)}
+    .img-preview img{max-width:520px; max-height:520px; object-fit:contain; border-radius:6px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; background:#fff; border:1px solid var(--border); border-radius:10px; padding:8px; max-height:220px; overflow:auto}
+  </style>
+</head>
+<body>
+  <div class="app" id="appRoot">
+    <div class="topbar">
+      <button id="btnToggleSidebar" class="btn">파일 목록 숨기기</button>
+      <span class="pill">LLM: <b id="llmInfo">-</b></span>
+    </div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <h2>파일 목록</h2>
+      <div class="stats" id="statsRow">
+        <span class="stat total" id="filterAll">전체 <b id="statTotal">0</b></span>
+        <span class="stat done" id="filterDone">완료 <b id="statDone">0</b></span>
+        <span class="stat todo" id="filterTodo">미완료 <b id="statTodo">0</b></span>
+      </div>
+      <div class="search-wrap">
+        <input id="searchInput" class="search-input" type="text" placeholder="파일명 검색…" />
+        <button id="btnClearSearch" class="btn">지우기</button>
+      </div>
+      <div id="fileList" class="file-list"></div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+
+      <!-- A) PPT 캡쳐 → 프롬프트 변환 (VL: Llama4/Gemma3) -->
+      <section class="panel" id="panelPPT">
+        <h3>
+          PPT 캡쳐 → 프롬프트 변환 (Llama4/Gemma3)
+          <button id="btnTogglePPT" class="btn">접기</button>
+        </h3>
+
+        <div class="section-body" id="pptBody">
+          <div class="row" style="justify-content:space-between; align-items:center; margin:-4px 0 8px 0">
+            <div>
+              <label class="pill">VL 모델:
+                <label style="margin-left:8px">
+                  <input type="radio" name="vlmodel" value="llama4" checked> Llama4
+                </label>
+                <label style="margin-left:8px">
+                  <input type="radio" name="vlmodel" value="gemma"> Gemma3
+                </label>
+              </label>
+            </div>
+            <div>
+              <label class="btn" for="fileInputPPT">PPT 파일 선택</label>
+              <input id="fileInputPPT" type="file" accept="image/*" style="display:none" />
+            </div>
+          </div>
+
+          <!-- 입력 4장: mask / merge / scribble / ppt -->
+          <div class="cols-4" style="margin-bottom:8px">
+            <div>
+              <div class="legend">Input image (mask)</div>
+              <div class="img-box"><img id="imgMask" style="display:none"><div id="noMask" style="color:#6c757d">마스크 없음</div></div>
+            </div>
+            <div>
+              <div class="legend">Expected Result (mask-merge)</div>
+              <div class="img-box"><img id="imgMerge" style="display:none"><div id="noMerge" style="color:#6c757d">선택 필요</div></div>
+            </div>
+            <div>
+              <div class="legend">Scribble image</div>
+              <div class="img-box"><img id="imgScribble" style="display:none"><div id="noScribble" style="color:#6c757d">없음</div></div>
+            </div>
+            <div>
+              <div class="legend">PPT 캡쳐</div>
+              <div class="img-box"><img id="imgPPT" style="display:none"><div id="noPPT" style="color:#6c757d">파일 선택</div></div>
+            </div>
+          </div>
+
+          <!-- 이미지 하단: 텍스트/버튼 -->
+          <div class="row" style="margin-top:6px">
+            <input id="pptUserPrompt" class="search-input" value="이미지를 상세히 한글로 설명해주세요." />
+            <!-- [CHANGED] 버튼 순서: SDIFF → 설명생성 -->
+            <button id="btnGenSDiffQwen" class="btn">Qwen으로 SDIFF 생성</button> <!-- [NEW] -->
+            <button id="btnGenPrompt" class="btn">설명 생성 (4장 입력)</button>
+            <button id="btnFollow" class="btn" disabled>후속 질문</button>
+            <button id="btnCopyPrompt" class="btn">복사</button>
+          </div>
+
+          <!-- VL 진행바(이미지 하단) -->
+          <div id="pptProgress" class="progress-inline">
+            <div class="bar"><i id="pptProgressBar"></i><span class="label" id="pptProgressLabel">0%</span></div>
+          </div>
+
+          <div id="pptLog" class="log" style="display:none"></div>
+
+          <textarea id="pptPrompt" class="textarea" placeholder="VL이 생성한 코드 지시 프롬프트(9개 섹션)가 여기에 표시됩니다." style="min-height:320px"></textarea>
+
+          <!-- STRUCTURED_DIFF 접기/펼치기 -->
+          <section class="panel" id="panelSDiff" style="margin-top:8px">
+            <h3>
+              STRUCTURED_DIFF (scribble 기반 추출, 읽기전용)
+              <button id="btnToggleSDiff" class="btn">접기</button>
+            </h3>
+            <div class="section-body" id="sdiffBody">
+              <div id="structuredBox" class="mono">{ }</div>
+            </div>
+          </section>
+
+          <!-- 참고한 few-shot -->
+          <section class="panel" id="panelFew" style="margin-top:12px">
+            <h3>참고한 few-shot <button id="btnToggleFew" class="btn">접기</button></h3>
+            <div class="section-body" id="fewBody">
+              <div id="fewList" class="few-grid"></div>
+              <div class="legend" style="margin-top:10px">
+                <b>지표 설명:</b><br/>
+                • <b>image</b>: 결과/입력 이미지 유사도(지각적 해시 기반)<br/>
+                • <b>name</b>: 파일명 토큰(제품/조건 등) 유사도<br/>
+                • <b>scale</b>: 메타의 픽셀 스케일(μm/px) 유사도<br/>
+                • <b>classes</b>: 메타 클래스 목록 유사도<br/>
+                • <b>tags</b>: 태그 유사도(있을 경우)<br/>
+                • <b>recency</b>: 최신성 가중치(최근일수록 가점)<br/>
+                • <b>ppt</b>: 해당 케이스에 PPT 캡쳐가 있으면 +보너스<br/>
+                • <b>μm/px</b>: 선택된 few-shot의 픽셀 스케일 요약<br/>
+                • <b>classes</b>: 선택된 few-shot의 클래스 요약
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- B) 파이썬 측정 코드 (GPT-OSS 생성/수정 + 실행) -->
+      <section class="panel" id="panelCode">
+        <h3>
+          파이썬 측정 코드
+          <button id="btnToggleCode" class="btn">접기</button>
+        </h3>
+        <div class="section-body" id="codeBody">
+
+          <!-- GPT-OSS 코드 생성 + 진행바(바로 아래) -->
+          <div class="row" style="margin-bottom:6px">
+            <button id="btnGenCode" class="btn">GPT-OSS로 코드 생성</button>
+            <button id="btnLoadTop1Code" class="btn">Top-1 few-shot 코드 불러오기</button> <!-- [NEW] -->
+            <span class="pill" id="codeGenHint">VL 지시 프롬프트 + (Top-1) few-shot 텍스트 기반 전체 스크립트 생성 → <b>완료 즉시 자동 실행</b></span> <!-- [CHANGED] -->
+          </div>
+          <div id="codeProgress" class="progress-inline" style="margin-top:-2px">
+            <div class="bar"><i id="codeProgressBar"></i><span class="label" id="codeProgressLabel">0%</span></div>
+          </div>
+
+          <textarea id="taCode" class="textarea" placeholder="여기에 measure.py 내용을 작성/수정합니다.
+실행 시 아래 인자가 전달됩니다:
+  --mask_path <input image (tif)>
+  --mask_merge_path <선택된 merge 이미지>
+  --meta_root <메타 JSON 폴더>
+  --out_dir <작업 폴더>
+
+스크립트는 실행 후 작업 디렉토리에 overlay.png를 생성해야 합니다."></textarea>
+
+          <div class="row" style="margin-top:6px">
+            <span id="selName" class="pill">파일: -</span>
+            <button id="btnRun" class="btn" disabled>코드 실행하기</button>
+            <button id="btnSave" class="btn" disabled>최종 저장(.py)</button>
+            <button id="btnRevert" class="btn" disabled>이전 실행 버전으로 되돌리기</button>
+            <label class="pill"><input type="checkbox" id="cbFewshot" checked /> few-shot에 추가</label>
+            <label class="pill"><input type="checkbox" id="cbIncludePPT" checked /> PPT도 포함</label>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <div style="flex:1">
+              <div style="font-size:12px;color:#6c757d;margin-bottom:6px">Input image (mask)</div>
+              <div class="img-box" id="wrapMask"><div style="color:#6c757d">마스크 미선택</div></div>
+            </div>
+            <div style="flex:1">
+              <div style="font-size:12px;color:#6c757d;margin-bottom:6px">Result image (overlay)</div>
+              <div class="img-box" id="wrapOverlay"><div style="color:#6c757d">overlay.png (실행 후 표시)</div></div>
+            </div>
+          </div>
+
+          <!-- LLM 보조 대화 (코드 문제 해결) : 이미지 하단 -->
+          <section class="panel" id="panelAssist" style="margin-top:12px">
+            <h3>LLM 보조 대화 (코드 문제 해결)</h3>
+            <div class="section-body">
+              <div class="legend" style="margin-bottom:6px">
+                규칙: 기존 기능은 절대 깨지면 안 됨. <b>사용자 지적 부분만</b> 수정한 <b>전체 코드</b>를 매번 재출력.
+              </div>
+              <div class="row" style="margin-bottom:6px">
+                <input id="assistInput" class="search-input" placeholder="문제/변경사항 입력 (예: offset_um 기본 0.003, draw_text False 유지)"/>
+                <button id="btnAssistSend" class="btn" disabled>보내기</button>
+              </div>
+              <div id="assistLog" class="log" style="display:none"></div>
+            </div>
+          </section>
+
+          <div id="logBox" class="log" style="display:none"></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- 큰 미리보기 (few-shot hover 용) -->
+  <div class="img-preview" id="imgPreview"><img id="imgPreviewImg" src=""></div>
+
+  <script>
+    const $=(id)=>document.getElementById(id);
+
+    const appRoot=$('appRoot'), btnToggleSidebar=$('btnToggleSidebar');
+    const fileListEl=$('fileList'), searchInput=$('searchInput'), btnClearSearch=$('btnClearSearch');
+    const statTotal=$('statTotal'), statDone=$('statDone'), statTodo=$('statTodo');
+    const filterAll=$('filterAll'), filterDone=$('filterDone'), filterTodo=$('filterTodo');
+
+    const selName=$('selName'), wrapMask=$('wrapMask'), wrapOverlay=$('wrapOverlay');
+    const taCode=$('taCode'), btnRun=$('btnRun'), btnSave=$('btnSave'), btnRevert=$('btnRevert');
+    const cbFewshot=$('cbFewshot'), cbIncludePPT=$('cbIncludePPT');
+
+    // VL
+    const fileInputPPT=$('fileInputPPT');
+    const imgMask=$('imgMask'), imgMerge=$('imgMerge'), imgScribble=$('imgScribble'), imgPPT=$('imgPPT');
+    const noMask=$('noMask'), noMerge=$('noMerge'), noScribble=$('noScribble'), noPPT=$('noPPT');
+    const pptPrompt=$('pptPrompt'), pptUserPrompt=$('pptUserPrompt');
+    const btnGenPrompt=$('btnGenPrompt'), btnCopyPrompt=$('btnCopyPrompt'), btnFollow=$('btnFollow');
+    const btnGenSDiffQwen=$('btnGenSDiffQwen'); // [NEW]
+    const pptLog=$('pptLog');
+    const structuredBox=$('structuredBox');
+    const btnToggleSDiff=$('btnToggleSDiff'), sdiffBody=$('sdiffBody');
+
+    // few-shot UI
+    const fewList=$('fewList'), btnToggleFew=$('btnToggleFew'), fewBody=$('fewBody');
+
+    // GPT-OSS
+    const btnGenCode=$('btnGenCode');
+    const btnLoadTop1Code=$('btnLoadTop1Code'); // [NEW]
+    const assistInput=$('assistInput'), btnAssistSend=$('btnAssistSend'), assistLog=$('assistLog');
+
+    // collapsible
+    const btnTogglePPT=$('btnTogglePPT'), pptBody=$('pptBody');
+    const btnToggleCode=$('btnToggleCode'), codeBody=$('codeBody');
+
+    const llmInfo=$('llmInfo');
+    const logBox=$('logBox');
+
+    // 진행바 2세트
+    const pptProgress=$('pptProgress'), pptProgressBar=$('pptProgressBar'), pptProgressLabel=$('pptProgressLabel');
+    const codeProgress=$('codeProgress'), codeProgressBar=$('codeProgressBar'), codeProgressLabel=$('codeProgressLabel');
+
+    let IMAGES=[], VIEW=[], CURRENT=null, PptId=null;
+    let statusPoller=null;
+    let LAST_SDIFF=null; // [NEW] 최근 생성된 SDIFF 저장
+
+    // ---------- 진행바: PPT ----------
+    let pptTimer=null, pptVal=0;
+    function pptStart(){ pptProgress.style.display='block'; pptVal=8; pptRender();
+      pptTimer=setInterval(()=>{ pptVal+=Math.max(0.25,(90-pptVal)*0.03); if(pptVal>85)pptVal=85; pptRender(); },120);}
+    function pptFinish(){ if(pptTimer)clearInterval(pptTimer); pptTimer=null; pptVal=100; pptRender(); setTimeout(()=>{ pptProgress.style.display='none'; },450); }
+    function pptFail(){ if(pptTimer)clearInterval(pptTimer); pptTimer=null; pptProgress.style.display='none'; }
+    function pptRender(){ pptProgressBar.style.width=Math.round(pptVal)+'%'; pptProgressLabel.textContent=Math.round(pptVal)+'%'; }
+
+    // ---------- 진행바: CODE ----------
+    let codeTimer=null, codeVal=0;
+    function codeStart(){ codeProgress.style.display='block'; codeVal=8; codeRender();
+      codeTimer=setInterval(()=>{ codeVal+=Math.max(0.25,(90-codeVal)*0.03); if(codeVal>85)codeVal=85; codeRender(); },120);}
+    function codeFinish(){ if(codeTimer)clearInterval(codeTimer); codeTimer=null; codeVal=100; codeRender(); setTimeout(()=>{ codeProgress.style.display='none'; },450); stopStatusPoll(); }
+    function codeFail(){ if(codeTimer)clearInterval(codeTimer); codeTimer=null; codeProgress.style.display='none'; stopStatusPoll(); }
+    function codeRender(){ codeProgressBar.style.width=Math.round(codeVal)+'%'; }
+
+    function startStatusPoll(){
+      stopStatusPoll();
+      statusPoller = setInterval(async ()=>{
+        if(!CURRENT) return;
+        try{
+          const r = await fetch(`/run/status?name=${encodeURIComponent(CURRENT)}`);
+          const d = await r.json();
+          if(d && d.ok){
+            codeProgressLabel.textContent = `${Math.max(0,Math.min(100, d.progress||10))}% · ${d.label||''}`;
+          }
+        }catch(_){}
+      }, 600);
+    }
+    function stopStatusPoll(){
+      if(statusPoller){ clearInterval(statusPoller); statusPoller=null; }
+    }
+
+    // ---------- 사이드바/토글 ----------
+    btnToggleSidebar.addEventListener('click', ()=>{
+      appRoot.classList.toggle('sidebar-hidden');
+      btnToggleSidebar.textContent = appRoot.classList.contains('sidebar-hidden') ? '파일 목록 보이기' : '파일 목록 숨기기';
+    });
+    btnTogglePPT.addEventListener('click', ()=>{
+      const open = pptBody.style.display !== 'none';
+      pptBody.style.display = open ? 'none' : 'block';
+      btnTogglePPT.textContent = open ? '펼치기' : '접기';
+    });
+    btnToggleCode.addEventListener('click', ()=>{
+      const open = codeBody.style.display !== 'none';
+      codeBody.style.display = open ? 'none' : 'block';
+      btnToggleCode.textContent = open ? '펼치기' : '접기';
+    });
+    btnToggleFew.addEventListener('click', ()=>{
+      const open = fewBody.style.display !== 'none';
+      fewBody.style.display = open ? 'none' : 'block';
+      btnToggleFew.textContent = open ? '펼치기' : '접기';
+    });
+    btnToggleSDiff.addEventListener('click', ()=>{
+      const open = sdiffBody.style.display !== 'none';
+      sdiffBody.style.display = open ? 'none' : 'block';
+      btnToggleSDiff.textContent = open ? '펼치기' : '접기';
+    });
+
+    function renderStats(){
+      const total=IMAGES.length, done=IMAGES.filter(x=>x.labeled).length, todo=total-done;
+      statTotal.textContent=total; statDone.textContent=done; statTodo.textContent=todo;
+    }
+    function itemTemplate(it,q){
+      const badge = it.labeled ? `<span class="badge done">완료</span>` : `<span class="badge">미완료</span>`;
+      const nameHTML = q ? it.name.replace(new RegExp(q,'ig'), m=>`<mark>${m}</mark>`) : it.name;
+      return `<div class="file-item" data-name="${it.name}"><span class="file-name" title="${it.name}">${nameHTML}</span>${badge}</div>`;
+    }
+    function renderList(q=''){
+      fileListEl.innerHTML = VIEW.map(it=>itemTemplate(it,q)).join('');
+      fileListEl.querySelectorAll('.file-item').forEach(div=>{
+        div.addEventListener('click', ()=>setSelected(div.dataset.name));
+      });
+      highlightSelected();
+    }
+    function highlightSelected(){
+      fileListEl.querySelectorAll('.file-item').forEach(el=>{
+        el.classList.toggle('active', el.dataset.name===CURRENT);
+      });
+    }
+
+    function applyFilter(){
+      const q=searchInput.value.trim().toLowerCase();
+      const base = [...IMAGES];
+      const filtered = !q ? base : base.filter(it => (it.name||'').toLowerCase().includes(q));
+      if(currentStateFilter==='done'){
+        VIEW = filtered.filter(it=>it.labeled);
+      }else if(currentStateFilter==='todo'){
+        VIEW = filtered.filter(it=>!it.labeled);
+      }else{
+        VIEW = filtered;
+      }
+      renderList(q);
+    }
+
+    let currentStateFilter = 'all';
+    filterAll.addEventListener('click', ()=>{ currentStateFilter='all'; applyFilter(); });
+    filterDone.addEventListener('click', ()=>{ currentStateFilter='done'; applyFilter(); });
+    filterTodo.addEventListener('click', ()=>{ currentStateFilter='todo'; applyFilter(); });
+
+    function loadImages(){
+      fetch('/get_images').then(r=>r.json()).then(d=>{
+        if(Array.isArray(d)){ IMAGES=d; VIEW=[...IMAGES]; renderList(''); renderStats(); }
+      });
+      fetch('/health').then(()=>{ llmInfo.textContent='OK'; }).catch(()=>{ llmInfo.textContent='오프라인'; });
+    }
+    searchInput.addEventListener('input', applyFilter);
+    btnClearSearch.addEventListener('click', ()=>{ searchInput.value=''; applyFilter(); });
+
+    function getSelectedMeta(name){
+      const idx = IMAGES.findIndex(x=>x.name===name);
+      return idx>=0 ? IMAGES[idx] : null;
+    }
+
+    function setSelected(name){
+      CURRENT=name; PptId = PptId || null;
+      selName.textContent=`파일: ${name}`;
+      const mergeURL = `/get_image/${encodeURIComponent(name)}`;
+      imgMerge.src = mergeURL; imgMerge.style.display='block'; noMerge.style.display='none';
+      const maskURL = `/get_mask/${encodeURIComponent(name)}`;
+      imgMask.onerror = ()=>{ imgMask.style.display='none'; noMask.style.display='block'; wrapMask.innerHTML = `<div style="color:#6c757d">마스크 없음</div>`; };
+      imgMask.onload  = ()=>{ imgMask.style.display='block'; noMask.style.display='none';
+        wrapMask.innerHTML = `<img src="${maskURL}" style="max-width:100%;max-height:36vh;border-radius:8px">`; };
+      imgMask.src = maskURL;
+
+      imgScribble.onerror = ()=>{ imgScribble.style.display='none'; noScribble.style.display='block'; };
+      imgScribble.onload  = ()=>{ imgScribble.style.display='block'; noScribble.style.display='none'; };
+      imgScribble.src = `/get_scribble/${encodeURIComponent(name)}`;
+
+      wrapOverlay.innerHTML = `<div style="color:#6c757d">overlay.png (실행 후 표시)</div>`;
+      btnRun.disabled=false; btnSave.disabled=false; btnRevert.disabled=false; btnAssistSend.disabled=false;
+
+      highlightSelected();
+
+      // [CHANGED] 미완료 파일이면 코드 박스 비움 유지
+      const meta = getSelectedMeta(name);
+      if(meta && meta.labeled){
+        fetch(`/code/get?image_name=${encodeURIComponent(name)}`).then(r=>r.json()).then(d=>{
+          if(d && d.ok && d.code){ taCode.value = d.code; }
+        }).catch(()=>{});
+      }else{
+        taCode.value = ''; // 비워둠
+      }
+    }
+
+    // PPT 파일 입력
+    fileInputPPT.addEventListener('change', ()=>{
+      const inp=fileInputPPT;
+      if(inp.files && inp.files[0]){
+        const url=URL.createObjectURL(inp.files[0]);
+        imgPPT.src=url; imgPPT.style.display='block'; noPPT.style.display='none';
+      }else{
+        imgPPT.style.display='none'; noPPT.style.display='block';
+      }
+    });
+
+    // few-shot 렌더 + hover 확대
+    function renderFewshots(arr){
+      if(!Array.isArray(arr) || arr.length===0){
+        fewList.innerHTML='<div style="color:#6c757d">선정된 few-shot이 없습니다.</div>'; return;
+      }
+      fewList.innerHTML = arr.map(it=>{
+        const order = ["mask.jpg","merge.jpg","ppt.jpg"];
+        const imgs = order.map(nm=>{
+          const part = (it.parts||[]).find(p=>p.name===nm);
+          if(!part) return '';
+          const u = part.url;
+          return `<img class="thumb" src="${u}" data-full="${u}" alt="${part.name}">`;
+        }).join('');
+        const b=it.score_breakdown||{}; const score=(typeof it.score==='number')?it.score:0; const barW=Math.max(0,Math.min(100,Math.round(score*100)));
+        return `
+        <div class="few-card">
+          <div style="font-size:12px;color:#6c757d;margin-bottom:6px">ID: ${it.id} · ${it.created_at||''}</div>
+          <div style="display:grid;gap:6px">${imgs}</div>
+          <div style="margin:6px 0 4px 0"><b>score:</b> ${score.toFixed(3)}</div>
+          <div class="few-bar"><i style="width:${barW}%"></i></div>
+          <div class="legend" style="margin-top:6px">
+            image ${num(b.image)} · name ${num(b.name)} · scale ${num(b.scale)} · classes ${num(b.classes)} · recency ${num(b.recency)} · ppt +${num(b.ppt_bonus)}
+          </div>
+        </div>`;
+      }).join('');
+      function num(x){ return (typeof x==='number')?x.toFixed(2):'-'; }
+      attachPreviewHover();
+    }
+
+    function attachPreviewHover(){
+      const preview = $('imgPreview'), pvImg = $('imgPreviewImg');
+      fewList.querySelectorAll('img.thumb').forEach(img=>{
+        img.addEventListener('mouseenter', (e)=>{
+          const full = img.getAttribute('data-full'); if(!full) return;
+          pvImg.src = full; preview.style.display='block'; positionPreview(e);
+        });
+        img.addEventListener('mousemove', positionPreview);
+        img.addEventListener('mouseleave', ()=>{ preview.style.display='none'; pvImg.src=''; });
+      });
+      function positionPreview(e){
+        const pad=16; let x=e.clientX+pad, y=e.clientY+pad;
+        const vw=window.innerWidth, vh=window.innerHeight;
+        const pw=540, ph=540;
+        if(x+pw > vw) x = e.clientX - pw - pad;
+        if(y+ph > vh) y = e.clientY - ph - pad;
+        preview.style.left = Math.max(8,x)+'px';
+        preview.style.top  = Math.max(8,y)+'px';
+      }
+    }
+
+    // VL 설명 생성 (기존 유지)
+    $('btnGenPrompt').addEventListener('click', async ()=>{
+      if(!CURRENT) return alert('파일을 먼저 선택하세요.');
+      pptLog.style.display='block'; pptLog.textContent='VL 호출 중...'; pptStart();
+      try{
+        const fd=new FormData();
+        fd.append('vl_model', getVLModel()); // llama4 | gemma
+        fd.append('selected_name', CURRENT);
+        fd.append('prompt', pptUserPrompt.value || '이미지를 상세히 한글로 설명해주세요.');
+        if(fileInputPPT.files && fileInputPPT.files[0]) fd.append('image', fileInputPPT.files[0]);
+        // [NEW] 직전 Qwen SDIFF를 함께 전달(있으면)
+        if(LAST_SDIFF){ fd.append('structured_diff', JSON.stringify(LAST_SDIFF)); }
+
+        const res=await fetch('/vl/describe4',{method:'POST',body:fd});
+        const data=await res.json();
+        if(data.ok){
+          pptPrompt.value=data.text||'';
+          structuredBox.textContent = JSON.stringify(data.structured_diff||LAST_SDIFF||{}, null, 2);
+          if(data.structured_diff) LAST_SDIFF = data.structured_diff; // 최신 반영
+          PptId = data.ppt_id || null;
+          $('btnFollow').disabled=false;
+          if(data.used_fewshots) renderFewshots(data.used_fewshots);
+          pptLog.style.display='none'; pptFinish();
+        }else{
+          pptLog.textContent='오류: '+(data.error||'unknown'); pptFail();
+        }
+      }catch(e){ pptLog.textContent='요청 실패: '+e; pptFail(); }
+    });
+
+    function getVLModel(){
+      const r = document.querySelector('input[name="vlmodel"]:checked');
+      return r ? r.value : 'llama4';
+    }
+
+    // [NEW] Qwen으로 SDIFF 생성
+    btnGenSDiffQwen.addEventListener('click', async ()=>{
+      if(!CURRENT) return alert('파일을 먼저 선택하세요.');
+      pptLog.style.display='block'; pptLog.textContent='Qwen으로 SDIFF 생성 중...'; pptStart();
+      try{
+        const body = { image_name: CURRENT };
+        const r = await fetch('/vl/sdiff_qwen', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const d = await r.json();
+        if(d.ok){
+          LAST_SDIFF = d.structured_diff || {};
+          structuredBox.textContent = JSON.stringify(LAST_SDIFF, null, 2);
+          pptLog.style.display='none'; pptFinish();
+        }else{
+          pptLog.textContent='오류: '+(d.error||'unknown'); pptFail();
+        }
+      }catch(e){ pptLog.textContent='요청 실패: '+e; pptFail(); }
+    });
+
+    // VL 후속 질문 (기존 유지, SDIFF 동봉)
+    $('btnFollow').addEventListener('click', async ()=>{
+      if(!CURRENT) return alert('파일을 먼저 선택하세요.');
+      pptLog.style.display='block'; pptLog.textContent='VL 후속 호출 중...'; pptStart();
+      try{
+        const fd=new FormData();
+        fd.append('vl_model', getVLModel());
+        fd.append('selected_name', CURRENT);
+        fd.append('prev_text', pptPrompt.value || '');
+        fd.append('user_followup', '이어서 보강 및 수정해 주세요.');
+        if(PptId) fd.append('ppt_id', PptId);
+        if(LAST_SDIFF){ fd.append('structured_diff', JSON.stringify(LAST_SDIFF)); } // [NEW]
+
+        const res=await fetch('/vl/continue4',{method:'POST',body:fd});
+        const data=await res.json();
+        if(data.ok){
+          pptPrompt.value=data.text||'';
+          structuredBox.textContent = JSON.stringify(data.structured_diff||LAST_SDIFF||{}, null, 2);
+          if(data.structured_diff) LAST_SDIFF = data.structured_diff;
+          if(data.used_fewshots) renderFewshots(data.used_fewshots);
+          pptLog.style.display='none'; pptFinish();
+        }else{
+          pptLog.textContent='오류: '+(data.error||'unknown'); pptFail();
+        }
+      }catch(e){ pptLog.textContent='요청 실패: '+e; pptFail(); }
+    });
+
+    $('btnCopyPrompt').addEventListener('click', async ()=>{
+      try{ await navigator.clipboard.writeText(pptPrompt.value||''); $('btnCopyPrompt').textContent='복사됨'; setTimeout(()=>$('btnCopyPrompt').textContent='복사',900); }
+      catch(e){ alert('복사 실패: '+e); }
+    });
+
+    // GPT-OSS 코드 생성 (완료 즉시 자동 실행) — SDIFF 동봉 & Top-1만 사용
+    $('btnGenCode').addEventListener('click', async ()=>{
+      if(!CURRENT) return alert('파일을 먼저 선택하세요.');
+      const guide = pptPrompt.value.trim();
+      if(!guide){ alert('먼저 VL 지시 프롬프트를 생성하세요.'); return; }
+
+      codeStart();
+      codeProgress.style.display='block';
+      $('codeProgressLabel').textContent = '10% · 코드 생성 중…';
+      logBox.style.display='block'; logBox.textContent='GPT-OSS 코드 생성 중...';
+
+      try{
+        const payload = { image_name: CURRENT, prompt_text: guide, fewshot_texts: [], structured_diff: LAST_SDIFF || null };
+        const res = await fetch('/gptoss/generate', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data=await res.json();
+        if(data.ok && data.code && data.code.trim()){
+          taCode.value = data.code;
+          logBox.textContent = '코드가 생성되었습니다. 자동으로 실행합니다...';
+          $('codeProgressLabel').textContent = '실행 준비 중…';
+          await runMeasure(true);
+        }else{
+          logBox.textContent = '코드 생성 실패: ' + (data.error||'');
+          $('codeProgressLabel').textContent = '실패';
+          codeFail();
+        }
+      }catch(e){
+        logBox.textContent = '요청 실패: ' + e;
+        $('codeProgressLabel').textContent = '실패';
+        codeFail();
+      }
+    });
+
+    async function runMeasure(autoFix=true){
+      const code=taCode.value;
+      if(!code || !code.trim()) { alert('측정 코드를 입력/생성하세요.'); return; }
+      btnRun.disabled=true;
+
+      if(codeProgress.style.display!=='block'){ codeStart(); }
+      $('codeProgressLabel').textContent = '실행 중…';
+      startStatusPoll();
+
+      logBox.style.display='block'; logBox.textContent='실행 중...';
+      try{
+        const r=await fetch('/code/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_name:CURRENT, code, auto_fix:autoFix, max_fixes:5})});
+        const d=await r.json();
+
+        let msg = '';
+        if(d.auto_fixed){
+          msg += "자동 에러 수정 루프가 수행되었습니다.\n\n";
+          msg += "[최종 실행 결과]\n";
+          msg += `returncode: ${d.returncode}\n\n[stdout]\n${d.stdout||''}\n\n[stderr]\n${d.stderr||''}\n`;
+        }else{
+          msg += `returncode: ${d.returncode}\n\n[stdout]\n${d.stdout||''}\n\n[stderr]\n${d.stderr||''}`;
+        }
+        logBox.textContent = msg;
+
+        if(d.overlay_exists){
+          const url=`/overlay?name=${encodeURIComponent(CURRENT)}&ts=${Date.now()}`;
+          wrapOverlay.innerHTML = `<img src="${url}" style="max-width:100%;max-height:36vh;border-radius:8px">`;
+        }else{
+          wrapOverlay.innerHTML=`<div style="color:#a94442">overlay.png가 생성되지 않았습니다.</div>`;
+        }
+        codeFinish();
+      }catch(e){ console.error(e); logBox.textContent='실행 오류: '+e; codeFail(); }
+      finally{ btnRun.disabled=false; }
+    }
+
+    // 코드 수동 실행
+    $('btnRun').addEventListener('click', ()=>runMeasure(true));
+
+    // 코드 저장
+    $('btnSave').addEventListener('click', async ()=>{
+      if(!CURRENT) return alert('파일을 먼저 선택하세요.');
+      const code=taCode.value; if(!code.trim()) return alert('저장할 코드가 없습니다.');
+      const body={ image_name:CURRENT, code, add_to_fewshot: $('cbFewshot').checked, include_ppt: $('cbIncludePPT').checked, ppt_id: (window.PptId||null) };
+      try{
+        const r=await fetch('/code/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        const d=await r.json();
+        if(d.status==='saved'){
+          alert(`저장 완료: ${d.filename}` + (d.fewshot_id?`\nFew-shot ID: ${d.fewshot_id}`:''));
+          const idx=IMAGES.findIndex(x=>x.name===CURRENT); if(idx>=0){ IMAGES[idx].labeled=true; renderStats(); applyFilter(); highlightSelected(); }
+        }else alert('저장 실패: '+(d.error||''));
+      }catch(e){ console.error(e); alert('저장 오류'); }
+    });
+
+    // 이전 실행 버전으로 되돌리기
+    $('btnRevert').addEventListener('click', async ()=>{
+      if(!CURRENT) return alert('파일을 먼저 선택하세요.');
+      try{
+        const r=await fetch('/code/revert_last_run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_name:CURRENT})});
+        const d=await r.json();
+        if(d.ok){ taCode.value = d.code||''; alert('가장 최근 실행 시점의 코드로 되돌렸습니다.'); }
+        else alert('복원 실패: ' + (d.error||''));
+      }catch(e){ alert('복원 오류: '+e); }
+    });
+
+    // [NEW] Top-1 few-shot 코드 불러오기
+    btnLoadTop1Code.addEventListener('click', async ()=>{
+      if(!CURRENT) return alert('파일을 먼저 선택하세요.');
+      try{
+        const r=await fetch(`/fewshot/top1_code?image_name=${encodeURIComponent(CURRENT)}`);
+        const d=await r.json();
+        if(d.ok && d.code){
+          taCode.value = d.code;
+          alert('Top-1 few-shot 코드가 불러와졌습니다.');
+        }else{
+          alert('불러오기 실패: ' + (d.error||''));
+        }
+      }catch(e){ alert('요청 오류: ' + e); }
+    });
+
+    // LLM 보조 대화 (코드 문제 해결)
+    $('btnAssistSend').addEventListener('click', async ()=>{
+      if(!CURRENT) return alert('파일을 먼저 선택하세요.');
+      const msg = assistInput.value.trim(); if(!msg) return alert('요청을 입력해주세요.');
+      codeStart(); $('codeProgressLabel').textContent='코드 수정 중…'; startStatusPoll();
+      assistLog.style.display='block'; assistLog.textContent='GPT-OSS와 대화 중...';
+      try{
+        const r=await fetch('/gptoss/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_name:CURRENT, message:msg, current_code: taCode.value})});
+        const d=await r.json();
+        if(d.ok){
+          taCode.value = d.code || '';
+          assistLog.textContent = '수정된 전체 코드가 반영되었습니다. 문제가 계속되면 추가로 지적해 주세요.';
+          codeFinish();
+        }else{
+          assistLog.textContent = '대화 실패: ' + (d.error||'');
+          codeFail();
+        }
+      }catch(e){
+        assistLog.textContent = '요청 실패: ' + e;
+        codeFail();
+      }
+    });
+
+    function loadInitial(){
+      fetch('/get_images').then(r=>r.json()).then(d=>{ if(Array.isArray(d)){ IMAGES=d; VIEW=[...IMAGES]; renderList(''); renderStats(); }});
+      fetch('/health').then(()=>{ llmInfo.textContent='OK'; }).catch(()=>{ llmInfo.textContent='오프라인'; });
+    }
+    loadInitial();
+  </script>
+</body>
+</html>
