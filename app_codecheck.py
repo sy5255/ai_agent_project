@@ -58,23 +58,23 @@ FEWSHOT_DIR = Path(os.getenv("FEWSHOT_DIR", str(BASE_DIR / "fewshot_repo"))).res
 SCRIBBLE_DIR = Path(os.getenv("SCRIBBLE_DIR", r"D:\aip-expert\dataset\dataset_updated\scribble")).resolve()
 
 # Gemma3 API 환경변수 (없으면 None)
-GEMMA_BASE_URL = os.getenv("GEMMA_BASE_URL", "http://gemma3/v1") 
+GEMMA_BASE_URL = os.getenv("GEMMA_BASE_URL", "http://gemma3/v1")
 GEMMA_MODEL = os.getenv("GEMMA_MODEL", "google/gemma-3-27b-it")  # 예: "Qwen/Qwen-VL-8B-Thinking" 대체 가능
 GEMMA_X_DEP_TICKET = os.getenv("GEMMA_X_DEP_TICKET", "12345") 
 GEMMA_SEND_SYSTEM_NAME = os.getenv("GEMMA_SEND_SYSTEM_NAME", "AutoMeasure")
 GEMMA_USER_ID = os.getenv("GEMMA_USER_ID", "ss") 
-GEMMA_USER_TYPE = os.getenv("GEMMA_USER_TYPE", "AD_ID")
+GEMMA_USER_TYPE = os.getenv("GEMMA_USER_TYPE", "ss") 
 
 # -----------------------------
 # Llama-4 / gpt-oss 사내 API (선택적)
 # -----------------------------
-LLAMA4_BASE_URL = os.getenv("LLAMA4_BASE_URL", "http://llama-4/maverick/v1")  # v1까지 
+LLAMA4_BASE_URL = os.getenv("LLAMA4_BASE_URL", "http://llama-4/maverick/v1")  # v1까지
 LLAMA4_MODEL = os.getenv("LLAMA4_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
 #LLAMA_MODEL_SCOUT    = os.getenv("LLAMA_MODEL_SCOUT", "meta-llama/llama-4-scout-17b-16e-instruct")
 LLAMA4_X_DEP_TICKET = os.getenv("LLAMA4_X_DEP_TICKET", "12345") 
 LLAMA4_SEND_SYSTEM_NAME = os.getenv("LLAMA4_SEND_SYSTEM", "AutoMeasure")
 LLAMA4_USER_ID = os.getenv("LLAMA4_USER_ID", "ss") 
-LLAMA4_USER_TYPE = os.getenv("LLAMA4_USER_TYPE", "AD_ID")
+LLAMA4_USER_TYPE = os.getenv("LLAMA4_USER_TYPE", "ss") 
 
 GPTOSS_BASE_URL = os.getenv("GPTOSS_BASE_URL", "http://gpt-oss-120b/v1")
 GPTOSS_MODEL     = os.getenv("GPTOSS_MODEL", "openai/gpt-oss-120b")
@@ -1352,28 +1352,32 @@ def _safe_invoke_gptoss_for_code(guide_text: str, fewshot_texts: List[str]) -> s
     from langchain_core.messages import SystemMessage, HumanMessage
     llm = _build_gptoss()
 
-    # [FIX] 시스템 프롬프트 수정: 'classes_present' 사용을 강제
+    # [FIX] 시스템 프롬프트 수정: VLM의 '자연어 알고리즘'을 구현하도록 강제
     sys_msg = (
         "너는 이미지를 분석하는 파이썬 측정 스크립트 생성 전문가다. "
         "너의 유일한 임무는 '지시 프롬프트'에 서술된 **측정 로직(Logic)**을 "
-        "`mask_path` 이미지 위에서 실행하는 **알고리즘 코드(예: cv2.findContours, cv2.PCACompute)**로 구현하는 것이다."
+        "`mask_path` 이미지 위에서 실행하는 **알고리즘 코드(예: cv2.findContours, cv2.fitLine)**로 구현하는 것이다."
         "마크다운 코드펜스는 절대 사용하지 말 것.\\n\\n"
-        "## 중요 규칙:\\n"
-        "1. '지시 프롬프트'는 너의 **가장 중요한 명령**이다. (예: '수직 높이 측정' 로직)\\n"
-        "2. '지시 프롬프트'에 포함된 **[MASK METADATA]** 블록을 반드시 확인하라.\\n"
-        "3. 로직을 구현할 때, **절대 `class_val=10` 같은 임의의 값을 추측하지 마라.**\\n"
-        "4. '지시 프롬프트'가 'class_val'을 명시했다면 그 값을 사용하고, 명시하지 않았다면 `[MASK METADATA]`의 'classes' 리스트(예: `[30, 50, 70]`)에서 '지시 프롬프트'의 '손가락' 같은 설명과 가장 일치하는 **올바른 `class_val`을 선택**하여 코드에 사용해야 한다.\\n"
-        "5. 'few-shot 텍스트'는 **스타일과 구문 참조용**이며, '지시 프롬프트'와 충돌 시 무시해야 한다."
+        
+        "## [매우 중요] 기하학 알고리즘 규칙 (필수 준수):\\n"
+        "1. **(최우선 알고리즘)** '지시 프롬프트'의 'PIPELINE STEPS' 또는 'PSEUDOCODE' 섹션에 **자연어 알고리즘**(예: '...4개 핑거의 최상단 점을 피팅...')이 명시되어 있다면, **너는 반드시 그 자연어 알고리즘을 그대로 파이썬 코드로 구현해야 한다.** (예: `darkest` 클래스 마스크에서 **여러** 컴포넌트를 찾아, **각** 컴포넌트의 최상단 점을 `np.vstack`으로 쌓고, `cv2.fitLine` 호출)\\n"
+        "2. **(법선 계산)** 만약 '지시 프롬프트'가 빨간 선과 초록 선의 '법선' 또는 '수직' 관계를 암시한다면, 너의 코드는 `cv2.fitLine`으로 계산된 빨간 선의 벡터(vx, vy)를 기반으로 **법선 벡터(-vy, vx)**를 계산하고, 이를 사용해 **최단 거리를 투영(projection)**해야 한다.\\n"
+
+        "## [매우 중요] 출력 규칙 (필수 준수):\\n"
+        "1. '지시 프롬프트'의 SDIFF 힌트(예: red.count: 1, green.count: 6)를 **정확히** 구현해야 한다. (예: 6개의 초록 선을 그리기 위해 6번 루프 실행)\\n"
+        "2. **`overlay.png`에는 절대 `cv2.drawContours`를 사용하지 마라.** 컨투어는 계산에만 사용하고, 최종 오버레이에는 **오직 `cv2.line`**만 사용하라.\\n"
+        "3. 오버레이에는 **오직 빨간색(BGR: 0,0,255)과 초록색(BGR: 0,255,0) 선**만 허용된다. 파란색, 노란색 등 다른 색을 절대 사용하지 마라.\\n"
+        
+        "## [매우 중요] 클래스 값(class_val) 처리 규칙:\\n"
+        "1. '지시 프롬프트'에 포함된 **[MASK METADATA]** 블록을 반드시 확인하라.\\n"
+        "2. `[MASK METADATA]`의 'classes' 리스트(예: `[30, 50, 70]`)에서 '지시 프롬프트'의 설명(예: 'darkest')과 가장 일치하는 **올바른 `class_val`을 선택**하여 코드에 사용해야 한다.\\n"
     )
     
-    # [CRITICAL FIX] 
-    # 호출할 함수를 원본(load_pixel_scale_um)이 아닌,
-    # 3/4-value 호환성을 보장하는 래퍼(__wrap_load_pixel_scale_um)로 변경합니다.
     user_msg = (
         "아래 지시 프롬프트와 few-shot 텍스트를 바탕으로 전체 파이썬 코드(measure.py)만 출력하세요.\\n"
         "- 필수 인자: --mask_path, --mask_merge_path, --meta_root, --out_dir\\n"
         "- out_dir에 overlay.png, measurements.csv 생성\\n"
-        "- meta_utils.__wrap_load_pixel_scale_um(mask_path, meta_root)는 (umx, umy, classes, meta_path) 4개 값 반환으로 가정\\n" # <-- 수정됨
+        "- meta_utils.__wrap_load_pixel_scale_um(mask_path, meta_root)는 (umx, umy, classes, meta_path) 4개 값 반환으로 가정\\n"
         "- draw_text 기본 False, line_thickness 기본 5 등 사용자 옵션 반영\\n"
         "- 절대 설명 문장 없이, 순수 파이썬 코드만 출력\\n\\n"
         "=== 지시 프롬프트 (Primary Command: Implement this Logic + Data Hints) ===\\n"
@@ -1394,6 +1398,75 @@ def _safe_invoke_gptoss_for_code(guide_text: str, fewshot_texts: List[str]) -> s
     resp2 = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=retry_user)])
     code2 = _extract_text_from_aimessage(resp2).strip()
     return _strip_code_fence(code2)
+
+# [NEW] Qwen-VL 호출을 위한 JSON 프롬프트 구조 (동적 생성됨)
+# 이 구조는 Qwen에게 "무엇을 채워야 하는지" 알려주는 '틀'입니다.
+def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: List[str]) -> str:
+    """
+    [CHANGED] Qwen이 'red_1' 연결 여부(true/false)와 'end_point' 클래스를
+    'cv_hint_to_correct'를 참조하여 추론하도록 프롬프트 '틀' 수정
+    """
+    import json
+    
+    desc_options_str = f"e.g., {json.dumps(brightness_descriptors[:2])}" if brightness_descriptors else "(e.g., ['darkest'])"
+    desc_list_str = f"Available brightness descriptors: {json.dumps(brightness_descriptors)}"
+
+    json_prompt_structure_obj = {
+        "analysis_summary": "One-sentence summary of the measurement task.",
+        "red_guides_refined": [],
+        "green_measures_refined": []
+    }
+
+    # 1. RED 가이드라인
+    try:
+        cv_red_lines = cv_sdiff.get("red_lines_detail", [])
+        for line in cv_red_lines:
+            json_prompt_structure_obj["red_guides_refined"].append({
+                "id": line.get("id"),
+                "cv_hint_geometric_fact": {
+                    "orientation": line.get("orientation")
+                },
+                "cv_hint_to_correct": {
+                    "detected_class_hint_by_location": line.get("detected_class_hint") # 예: 50 (This hint is likely WRONG)
+                },
+                "vlm_refinement": {
+                    "purpose": "Describe purpose (e.g., 'Horizontal reference line').",
+                    "construction_method": "CRITICAL: How to build this line? (e.g., 'Fit top-most points of the 4 'darkest' class fingers', 'Find center-line of 'brightest' class').",
+                    "required_classes": f"CRITICAL: List of brightness descriptors needed. {desc_options_str}. {desc_list_str}"
+                }
+            })
+    except Exception as e:
+        log.warning(f"[QWEN] Failed to build red prompt: {e}")
+
+    # 2. GREEN 측정선
+    try:
+        cv_green_lines = cv_sdiff.get("green_lines_detail", [])
+        for line in cv_green_lines:
+            json_prompt_structure_obj["green_measures_refined"].append({
+                "id": line.get("id"),
+                "cv_hint_geometric_fact": {
+                    "orientation": line.get("orientation"),
+                    "semantic": line.get("semantic"),
+                    "paired_red_id": line.get("paired_red_id")
+                },
+                "cv_hint_to_correct": { # [PROMPT] 이 힌트들을 VLM이 검증해야 함
+                    "detected_class_hint_start": line.get("detected_class_hint_start"), # 예: 50 (Likely WRONG)
+                    "detected_class_hint_end": line.get("detected_class_hint_end")     # 예: 10 (Likely CORRECT)
+                },
+                "vlm_refinement": {
+                    # [NEW PROMPT] 'red_1' 연결 여부를 VLM이 추론
+                    "start_is_connected_to_red_guide": "CRITICAL: Does the start point visually connect to 'red_1'? (true/false)",
+                    "end_is_connected_to_red_guide": "CRITICAL: Does the end point visually connect to 'red_1'? (true/false)",
+                    # [NEW PROMPT] 연결되지 않은 경우, 어떤 클래스에서 시작/끝나는지
+                    "start_point_class": f"If start is NOT connected, which brightness descriptor does it start from? (Use 'cv_hint_to_correct' if it seems right, e.g., 'darkest', null). {desc_list_str}",
+                    "end_point_class": f"If end is NOT connected, which brightness descriptor does it end at? (Use 'cv_hint_to_correct' if it seems right, e.g., 'brightest', null). {desc_list_str}"
+                }
+            })
+    except Exception as e:
+        log.warning(f"[QWEN] Failed to build green prompt: {e}")
+
+    # 3. 직렬화
+    return json.dumps(json_prompt_structure_obj, indent=2)
 
 # -----------------------------
 # Scribble 요약(Qwen) + Fallback
@@ -1428,12 +1501,9 @@ def _qwen_mm_generate_chat(processor, model, pil_images, prompt: str) -> str:
         out = model.generate(**text_inputs, **vision_inputs, max_new_tokens=256)
     return processor.batch_decode(out, skip_special_tokens=True)[0]
 
-def _qwen_summarize_scribble(mask_path: Path, merge_path: Path, scribble_path: Path) -> Dict[str, Any]:
+def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribble_path: Path, cv_sdiff: Dict, brightness_descriptors: List[str]) -> Dict[str, Any]:
     """
-    [CHANGED] 3개 이미지(Mask, Scribble, Merge)를 모두 로드하여 Qwen-VL에 전달합니다.
-    - [NEW] 프롬프트를 수정하여 'JSON 형식'의 구조화된 분석을 강제함 (추론 속도 향상).
-    - [NEW] max_new_tokens를 1024 -> 512로 줄임 (JSON 출력이 짧으므로).
-    - [REMOVED] raw_text에서 count/endpoint를 파싱하던 레거시 로직 제거.
+    [CHANGED] 3개 이미지 + CV SDIFF 힌트 + '밝기 서술자'를 Qwen-VL에 전달합니다.
     """
     import re, json
     from PIL import Image
@@ -1461,20 +1531,8 @@ def _qwen_summarize_scribble(mask_path: Path, merge_path: Path, scribble_path: P
 
     pil_images = [img for img in [pil_mask, pil_scribble, pil_merge] if img is not None]
 
-    # 결과 골격
-    sdiff: Dict[str, Any] = {
-        "schema": "scribble_v2_lite",
-        "red":   {"count": None, "lines": []}, # 카운트는 CV가 채울 예정
-        "green": {"count": None, "lines": []}, # 카운트는 CV가 채울 예정
-        "rules": {"green_on_red": True, "nudge_if_touching": True}, # 기본 규칙
-        "notes": {
-            "source": "qwen_json_analysis", # [CHANGED] 소스 이름 변경
-            "mask_name": mask_path.name if mask_path else None,
-            "merge_name": merge_path.name if merge_path else None,
-            "scribble_name": scribble_path.name if scribble_path else None,
-            "raw_text": None,
-        }
-    }
+    sdiff: Dict[str, Any] = dict(cv_sdiff) # CV SDIFF(v1) 전체 복사
+    sdiff.setdefault("notes", {}) # 'notes' 키가 없으면 생성
 
     # Qwen 호출
     raw_text = ""
@@ -1484,51 +1542,38 @@ def _qwen_summarize_scribble(mask_path: Path, merge_path: Path, scribble_path: P
             import torch
             processor, model, is_mm, meta = _qwen_pipe
 
-            # [FIX] 1. 이미지 '데이터'가 아닌 '플레이스홀더'를 포함하는 messages 리스트 구성
+            # --- [PROMPT CHANGE START] ---
+            # [CHANGED] '밝기 서술자' 목록을 Qwen 프롬프트에 전달
+            json_prompt_structure = _build_qwen_json_prompt_structure(cv_sdiff, brightness_descriptors)
+
             content = []
             prompt_parts = []
             
-            # --- [PROMPT CHANGE START] ---
             prompt_parts.append("You are an expert vision analyst. Analyze the provided images:")
             
             img_idx_counter = 0
             if pil_mask:
-                content.append({"type": "image"}) # <--- 플레이스홀더
-                prompt_parts.append(f"- Image {img_idx_counter+1}: 'Mask' (segmentation input, e.g., class 10, 30, 50)")
+                content.append({"type": "image"})
+                prompt_parts.append(f"- Image {img_idx_counter+1}: 'Mask' (segmentation input with different brightness levels)")
                 img_idx_counter += 1
             if pil_scribble:
-                content.append({"type": "image"}) # <--- 플레이스홀더
+                content.append({"type": "image"})
                 prompt_parts.append(f"- Image {img_idx_counter+1}: 'Scribble' (RED guides, GREEN measures)")
                 img_idx_counter += 1
             if pil_merge:
-                content.append({"type": "image"}) # <--- 플레이스홀더
+                content.append({"type": "image"})
                 prompt_parts.append(f"- Image {img_idx_counter+1}: 'Merged Example' (desired output)")
                 img_idx_counter += 1
 
+            # [PROMPT] "CV 힌트가 틀릴 수 있다"고 명확히 지시
             prompt_parts.append("\nAnalyze the 'Scribble' in context of the 'Mask'.")
+            prompt_parts.append("Your task is to **VERIFY or CORRECT** the `cv_hint` for each line.")
+            prompt_parts.append("The `cv_hint` (e.g., 50) is just a guess based on location and **IS LIKELY WRONG**.")
+            prompt_parts.append("Use your visual reasoning (e.g., 'the red guide *looks like* it's fitting the 'darkest' fingers') to determine the *true* classes needed.")
+            prompt_parts.append(f"You MUST use the 'brightness descriptors' from this list: {json.dumps(brightness_descriptors)}")
+            prompt_parts.append("Fill in the 'vlm_refinement' sections based on your reasoning.")
             prompt_parts.append("Provide your analysis STRICTLY in the following JSON format. Do NOT add any other text, explanations, or 'thinking' steps.")
             
-            # [NEW] JSON 구조화 프롬프트
-            # Red Line의 'relationship_to_mask'가 Red Line의 의도를 파악하는 핵심
-            json_prompt_structure = """
-{
-  "analysis_summary": "One-sentence summary of the measurement task.",
-  "red_guides": [
-    {
-      "id": 1,
-      "purpose": "Describe the guide line's purpose (e.g., 'Horizontal reference line').",
-      "relationship_to_mask": "CRITICAL: Describe its alignment with 'Mask' classes (e.g., 'Fitted to the top-most points of class 10', 'Positioned on class 50', 'Spans class 10 and 30')."
-    }
-  ],
-  "green_measures": [
-    {
-      "id": 1,
-      "purpose": "Describe the measurement line's purpose (e.g., 'Vertical height measurement').",
-      "measured_classes": "CRITICAL: Describe which mask class(es) this line appears to measure (e.g., 'Measures class 30', 'Measures from red guide to class 10')."
-    }
-  ]
-}
-"""
             prompt_parts.append(json_prompt_structure)
             # --- [PROMPT CHANGE END] ---
 
@@ -1540,21 +1585,17 @@ def _qwen_summarize_scribble(mask_path: Path, merge_path: Path, scribble_path: P
             dev = model.device
 
             if is_mm and pil_images:
-                # [FIX] 2. apply_chat_template을 호출하여 <|image_1|> 토큰이 포함된 '프롬프트 문자열' 생성
                 prompt_string = processor.apply_chat_template(
                     messages,
                     tokenize=False,
                     add_generation_prompt=True
                 )
-
-                # [FIX] 3. processor를 '단일 호출' (텍스트 문자열 + 이미지 리스트)
                 inputs = processor(
                     text=prompt_string,
                     images=pil_images,
                     return_tensors="pt"
                 ).to(dev)
             else:
-                # 텍스트 전용
                 prompt_string = processor.apply_chat_template(
                     messages,
                     tokenize=False,
@@ -1566,8 +1607,7 @@ def _qwen_summarize_scribble(mask_path: Path, merge_path: Path, scribble_path: P
                     return_tensors="pt"
                 ).to(dev)
 
-            # [SPEEDUP] max_new_tokens=512로 수정 (JSON 출력은 짧음)
-            gen_kwargs = dict(max_new_tokens=512)
+            gen_kwargs = dict(max_new_tokens=1024)
             with torch.no_grad():
                 out = model.generate(**inputs, **gen_kwargs)
 
@@ -1575,7 +1615,6 @@ def _qwen_summarize_scribble(mask_path: Path, merge_path: Path, scribble_path: P
             if hasattr(processor, "batch_decode"):
                 raw_text = processor.batch_decode(out, skip_special_tokens=True)[0]
                 
-                # 프롬프트 텍스트 제거 (기존 로직)
                 if raw_text.strip().startswith(prompt_string.strip()):
                      raw_text = raw_text.strip()[len(prompt_string.strip()):].strip()
                 elif "ASSISTANT:" in raw_text:
@@ -1583,11 +1622,9 @@ def _qwen_summarize_scribble(mask_path: Path, merge_path: Path, scribble_path: P
                 elif raw_text.strip().startswith(user_text.strip()):
                      raw_text = raw_text.strip()[len(user_text.strip()):].strip()
 
-                # [NEW] JSON이 아닌 불필요한 텍스트(e.g., "Here is the JSON:") 제거
                 if raw_text.startswith("{") and raw_text.endswith("}"):
-                    pass # Good JSON
+                    pass
                 else:
-                    # JSON 블록만 추출
                     m = re.search(r"\{.*\}", raw_text, re.DOTALL)
                     if m:
                         raw_text = m.group(0)
@@ -1603,12 +1640,10 @@ def _qwen_summarize_scribble(mask_path: Path, merge_path: Path, scribble_path: P
         raw_text = f"(Qwen call failed: {e})"
 
     sdiff["notes"]["raw_text"] = (raw_text or "")
-
-    # [REMOVED]
-    # 기존의 raw_text에서 'count', 'endpoint' 등을 파싱하던 로직 (qwen_red_count, m_grn, epats 등)
-    # 모두 제거합니다.
-    # Qwen은 이제 '의미 분석(JSON)'만 담당하고,
-    # '카운트/좌표'는 CV(_structured_from_scribble)가 담당합니다.
+    sdiff["notes"]["source"] = "hybrid_cv_geometry_qwen_notes"
+    sdiff["notes"]["mask_name"] = mask_path.name if mask_path else None
+    sdiff["notes"]["merge_name"] = merge_path.name
+    sdiff["notes"]["scribble_name"] = scribble_path.name
 
     return sdiff
 
@@ -2076,6 +2111,162 @@ def _load_latest_structured_diff_for(image_stem: str) -> Dict:
             return _qwen_summarize_scribble(mask_path, merge_path, scribble_path)
     return {}
 
+def _parse_qwen_json(raw_text: str) -> Dict:
+    """
+    Qwen의 raw_text (json 또는 'assistant\n{...}' 형식)를 파싱합니다.
+    [FIX] 'assistant' 키워드 뒤의 '마지막' JSON 블록을 정확히 파싱하도록 수정합니다.
+    """
+    import json, re
+    if not raw_text:
+        return {}
+    try:
+        json_str = raw_text
+        
+        assistant_keyword = "assistant"
+        
+        # 'assistant' 키워드를 찾아 그 이후의 텍스트만 추출
+        # [FIX] re.IGNORECASE와 \b (단어 경계)를 사용하여 안정성 확보
+        parts = re.split(f"\\b{assistant_keyword}\\b\\s*", raw_text, maxsplit=1, flags=re.IGNORECASE)
+        
+        if len(parts) > 1:
+            # 'assistant' 키워드 뒤의 텍스트를 가져옴
+            json_str = parts[1].strip()
+        else:
+            # 'assistant' 키워드가 없는 경우, 전체 텍스트에서 마지막 JSON을 찾음 (Fallback)
+            matches = list(re.finditer(r"\{[\s\S]*\}", raw_text, re.MULTILINE))
+            if matches:
+                json_str = matches[-1].group(0)
+            else:
+                # 'assistant'는 있지만 JSON이 없는 경우
+                json_str = raw_text 
+
+        # [FIX] 추출된 텍스트(json_str)에서 마지막 JSON 블록을 다시 찾음
+        # (Qwen이 JSON 뒤에 추가 텍스트를 뱉는 경우 대비)
+        final_matches = list(re.finditer(r"\{[\s\S]*\}", json_str, re.MULTILINE))
+        if not final_matches:
+            log.warning(f"[Qwen] No JSON block found after 'assistant' or in fallback: {raw_text[:200]}")
+            return {}
+            
+        final_json_str = final_matches[-1].group(0)
+        
+        return json.loads(final_json_str)
+
+    except Exception as e:
+        log.warning(f"[Qwen] Failed to parse raw_text JSON: {e}")
+        log.debug(f"[Qwen] Failing raw_text: {raw_text}")
+        return {}
+
+def _apply_qwen_refinement_to_sdiff_v1(sdiff_v1: Dict, brightness_map: Dict[str, int]) -> Dict:
+    """
+    [CHANGED] Qwen의 추론 결과('notes.raw_text')를 파싱하고, 'brightness_map'을 사용해
+    SDIFF v1 객체('red_lines_detail' 등)의 CV 힌트를 덮어씁니다.
+    """
+    
+    # 1. Qwen 추론 결과(JSON) 파싱
+    qwen_json = _parse_qwen_json(sdiff_v1.get("notes", {}).get("raw_text", ""))
+    if not qwen_json:
+        log.warning("[Refinement] Qwen JSON (notes.raw_text) is empty or invalid. Skipping refinement.")
+        return sdiff_v1 # 수정 없이 원본 반환
+    if not brightness_map:
+        log.warning("[Refinement] Brightness map is empty. Skipping refinement.")
+        return sdiff_v1 # 맵이 없으면 변환 불가
+
+    log.info(f"[Refinement] Applying Qwen VLM refinement to SDIFF v1 hints using brightness map: {brightness_map}")
+
+    # 2. SDIFF v1 상세 라인에 빠르게 접근하기 위한 Map 생성
+    v1_red_map = {
+        line.get("id"): line for line in sdiff_v1.get("red_lines_detail", []) if line.get("id")
+    }
+    v1_green_map = {
+        line.get("id"): line for line in sdiff_v1.get("green_lines_detail", []) if line.get("id")
+    }
+
+    # [NEW] VLM이 정제한 'red_1'의 '생성용 클래스'를 저장 (e.g., {"red_1": 10})
+    refined_red_construction_class_map = {}
+
+    # 3. RED 가이드라인 힌트 덮어쓰기
+    for qwen_line in qwen_json.get("red_guides_refined", []):
+        line_id = qwen_line.get("id")
+        vlm_ref = qwen_line.get("vlm_refinement", {})
+        req_classes_desc = vlm_ref.get("required_classes", []) # e.g., ["darkest"]
+        
+        if line_id in v1_red_map and req_classes_desc:
+            cv_line = v1_red_map[line_id]
+            original_hint = cv_line.get("detected_class_hint")
+            
+            try:
+                # Map descriptors to class IDs: e.g., ["darkest"] -> [10]
+                mapped_classes = [brightness_map[desc] for desc in req_classes_desc if desc in brightness_map]
+                if not mapped_classes:
+                    log.warning(f"[Refinement] RED '{line_id}': VLM provided descriptors {req_classes_desc} not in map.")
+                    continue
+                
+                # VLM이 정제한 '생성용' 클래스 (e.g., 10)
+                refined_hint = int(mapped_classes[0])
+                
+                # SDIFF v1 객체의 CV 힌트를 VLM 힌트로 덮어쓰기
+                cv_line["detected_class_hint"] = refined_hint
+                # [NEW] Green이 참조할 수 있도록 맵에 저장
+                refined_red_construction_class_map[line_id] = refined_hint
+                # [NEW] Llama4/GPT-OSS가 볼 수 있도록 SDIFF v1 객체에 저장
+                cv_line["vlm_required_classes"] = mapped_classes 
+                
+                log.info(f"[Refinement] RED line '{line_id}': CV hint {original_hint} -> VLM hint {refined_hint} (from {req_classes_desc})")
+
+            except Exception as e:
+                log.error(f"[Refinement] Error processing RED line '{line_id}': {e}")
+        elif line_id:
+            log.warning(f"[Refinement] RED line '{line_id}' from Qwen JSON not found in SDIFF v1.")
+
+    # 4. GREEN 측정선 힌트 덮어쓰기
+    for qwen_line in qwen_json.get("green_measures_refined", []):
+        line_id = qwen_line.get("id")
+        vlm_ref = qwen_line.get("vlm_refinement", {})
+        req_classes_desc = vlm_ref.get("required_classes", []) # e.g., ["darkest", "middle_gray_1"]
+        start_point_str = vlm_ref.get("start_point", "") # e.g., "red_1" or "top of 'darkest' class"
+
+        if line_id in v1_green_map:
+            cv_line = v1_green_map[line_id]
+            original_start = cv_line.get("detected_class_hint_start")
+            original_end = cv_line.get("detected_class_hint_end")
+
+            try:
+                # Map all required class descriptors
+                mapped_classes = [brightness_map[desc] for desc in req_classes_desc if desc in brightness_map]
+                cv_line["vlm_required_classes"] = mapped_classes # Store for Llama4/GPT-OSS
+                
+                refined_start = original_start # default
+                refined_end = original_end   # default
+
+                # 4-1. Start 힌트 정제 (사용자님이 지적한 핵심 로직)
+                if start_point_str.startswith("red_"):
+                    # 시작점을 ID 문자열("red_1") 자체로 설정
+                    refined_start = start_point_str 
+                elif mapped_classes:
+                    # 시작점이 가이드라인이 아닌 경우 (e.g., 'top of 'darkest' class')
+                    refined_start = int(mapped_classes[0])
+                
+                # 4-2. End 힌트 정제
+                if mapped_classes:
+                    # 끝점은 'required_classes'의 마지막 클래스로 가정
+                    refined_end = int(mapped_classes[-1])
+
+                # SDIFF v1 객체의 CV 힌트를 VLM 힌트로 덮어쓰기
+                cv_line["detected_class_hint_start"] = refined_start
+                cv_line["detected_class_hint_end"] = refined_end
+
+                if (original_start != refined_start) or (original_end != refined_end):
+                    # 로그가 (50, 10) -> ('red_1', 10)으로 찍힐 것임
+                    log.info(f"[Refinement] GREEN line '{line_id}': CV hint ({original_start},{original_end}) -> VLM hint ('{refined_start}',{refined_end}) (from {req_classes_desc})")
+
+            except Exception as e:
+                 log.error(f"[Refinement] Error processing GREEN line '{line_id}': {e}")
+        elif line_id:
+            log.warning(f"[Refinement] GREEN line '{line_id}' from Qwen JSON not found in SDIFF v1.")
+
+    # 5. 수정된 SDIFF v1 객체 반환
+    return sdiff_v1
+
 # ------------------------------------------
 # [NEW] Qwen으로 STRUCTURED_DIFF 생성
 # ------------------------------------------
@@ -2083,10 +2274,11 @@ def _load_latest_structured_diff_for(image_stem: str) -> Dict:
 async def vl_sdiff_qwen(data: Dict = Body(...)):
     """
     [CHANGED] CV(Geometry) + Qwen(Semantics) 하이브리드 SDIFF 생성
-    1.  [NEW] 픽셀 스케일(meta)을 먼저 조회
-    2.  OpenCV 기반(_structured_from_scribble)으로 픽셀 스케일을 전달하여 정확한 기하학/의미 정보 추출
-    3.  Qwen 기반(_qwen_summarize_scribble)으로 '의미' 설명(raw_text) 추출
-    4.  두 정보를 병합하여 가장 신뢰도 높은 SDIFF를 생성
+    1.  [NEW] '밝기-클래스 맵' (e.g., {"darkest": 10}) 생성
+    2.  OpenCV 기반(_structured_from_scribble)으로 v1 CV SDIFF (기하학/CV힌트) 추출
+    3.  Qwen 기반(_qwen_summarize_scribble)으로 '밝기 서술자'를 사용해 '의미' 설명(raw_text) 추론
+    4.  [NEW] _apply_qwen_refinement_to_sdiff_v1로 '밝기-클래스 맵'을 사용해 SDIFF v1 힌트 덮어쓰기
+    5.  v1 SDIFF를 v2_lite로 업그레이드하여 최종 반환
     """
     try:
         name = (data or {}).get("image_name")
@@ -2104,58 +2296,91 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
         if not scribble_path.exists():
             return JSONResponse({"ok": False, "error": f"scribble not found: {scribble_path}"})
         
-        # [FIX] 마스크 경로는 null일 수 있지만, 존재하지 않으면 오류 대신 None으로 처리
         if mask_path and not mask_path.exists():
             log.warning(f"Mask file not found at {mask_path}, proceeding without it.")
-            mask_path = None # CV 힌트가 null이 되더라도 Qwen 분석은 계속 진행
+            mask_path = None
 
-        # 1. [NEW] 픽셀 스케일 조회 (의미 추론용)
+        # 1. 픽셀 스케일 및 '밝기-클래스 맵' 생성
         um_per_px_x = 0.0
+        # [NEW] e.g., {"darkest": 10, "middle_gray_1": 30, "brightest": 50}
+        brightness_map = {} 
+        # [NEW] e.g., ["darkest", "middle_gray_1", "brightest"]
+        brightness_descriptors = [] 
+        
         if mask_path:
             try:
                 meta_sum = _meta_summary(mask_path)
                 um_per_px_x = meta_sum.get("um_per_px_x") or 0.0
-            except Exception:
-                um_per_px_x = 0.0
+                
+                # [NEW] 'classes_present'를 '밝기 서술자' 맵으로 변환
+                # (가정: classes_present는 [10, 30, 50] 처럼 밝기 순으로 정렬되어 있다)
+                classes_present = meta_sum.get("classes", [])
+                if classes_present:
+                    num_classes = len(classes_present)
+                    if num_classes == 1:
+                        brightness_map["only_class"] = int(classes_present[0])
+                    else:
+                        for i, cls_val in enumerate(classes_present):
+                            if i == 0:
+                                desc = "darkest"
+                            elif i == num_classes - 1:
+                                desc = "brightest"
+                            else:
+                                desc = f"middle_gray_{i}"
+                            brightness_map[desc] = int(cls_val)
+                    
+                    brightness_descriptors = list(brightness_map.keys())
+                    log.info(f"[Refinement] Created brightness map: {brightness_map}")
 
-        # 2. [CV] OpenCV 기반으로 정확한 기하학 정보(좌표, 각도, 개수, 의미) 추출
-        # [CRITICAL FIX] 
-        # _structured_from_scribble 함수에 'mask_path'를 전달하여
-        # CV 힌트(detected_class_hint)가 'null'이 되지 않도록 수정합니다.
-        sdiff_final = _structured_from_scribble(
+            except Exception as e:
+                log.error(f"Failed to create brightness map: {e}")
+        
+        if not brightness_map:
+            log.warning("[Refinement] Brightness map is empty. VLM refinement may be inaccurate.")
+
+
+        # 2. [CV] OpenCV 기반으로 v1 SDIFF (기하학 + CV 힌트) 추출
+        sdiff_cv_v1 = _structured_from_scribble(
             scribble_path, 
             um_per_px_x=um_per_px_x, 
-            mask_path=mask_path # <--- 이 인자가 누락되어 SDIFF 힌트가 null이 되었습니다.
+            mask_path=mask_path
         )
         
-        if not isinstance(sdiff_final, dict):
-            sdiff_final = {} # 실패 시 뼈대만이라도 확보
-        sdiff_final.setdefault("notes", {})
+        if not isinstance(sdiff_cv_v1, dict):
+            sdiff_cv_v1 = {}
+        sdiff_cv_v1.setdefault("notes", {})
 
-        # 3. [Qwen] VLM으로 '의미' 설명(raw_text) 추출
+        # 3. [Qwen] VLM으로 '의미' 설명(raw_text) 추출 및 병합
         try:
             _lazy_load_qwen()
-            # [FIX] mask_path가 None일 경우에도 Qwen이 실패하지 않도록 처리
-            sdiff_qwen = _qwen_summarize_scribble(mask_path, merge_path, scribble_path)
-
-            qwen_raw_text = (sdiff_qwen.get("notes") or {}).get("raw_text")
-            if qwen_raw_text:
-                sdiff_final["notes"]["raw_text"] = qwen_raw_text
-
-            sdiff_final["notes"]["source"] = "hybrid_cv_geometry_qwen_notes"
-            sdiff_final["notes"]["mask_name"] = mask_path.name if mask_path else None
-            sdiff_final["notes"]["merge_name"] = merge_path.name
-            sdiff_final["notes"]["scribble_name"] = scribble_path.name
+            # [CHANGED] Qwen에 '밝기 서술자' 목록 전달
+            sdiff_v1_merged = _qwen_summarize_scribble(
+                mask_path, 
+                merge_path, 
+                scribble_path, 
+                cv_sdiff=sdiff_cv_v1,
+                brightness_descriptors=brightness_descriptors
+            )
 
         except Exception as qe:
             log.warning(f"Qwen semantic enrichment failed, using CV-only: {qe}")
-            sdiff_final["notes"]["source"] = "cv_geometry_only (qwen_failed)"
+            sdiff_cv_v1["notes"]["source"] = "cv_geometry_only (qwen_failed)"
+            sdiff_v1_merged = sdiff_cv_v1
 
-        # 4. v1 -> v2_lite로 업그레이드 시도 (이전 답변의 _upgrade_sdiff_to_lite 함수가 수정됨)
+        # 4. [NEW] Qwen의 VLM 추론을 SDIFF v1 객체의 CV 힌트에 덮어쓰기
         try:
-            sdiff_final = _upgrade_sdiff_to_lite(sdiff_final)
+            # [CHANGED] '밝기-클래스 맵'을 전달하여 VLM 추론(e.g., "darkest")을 클래스(e.g., 10)로 변환
+            sdiff_v1_refined = _apply_qwen_refinement_to_sdiff_v1(sdiff_v1_merged, brightness_map)
+        except Exception as re:
+            log.error(f"Failed to apply Qwen refinement logic: {re}")
+            sdiff_v1_refined = sdiff_v1_merged
+
+        # 5. v1 -> v2_lite로 업그레이드
+        try:
+            sdiff_final = _upgrade_sdiff_to_lite(sdiff_v1_refined)
         except Exception as ue:
             log.warning(f"SDIFF v2_lite upgrade failed: {ue}")
+            sdiff_final = sdiff_v1_refined
 
         STRUCTURED_DIFF_CACHE[name] = sdiff_final
         return JSONResponse({"ok": True, "structured_diff": sdiff_final})
@@ -2793,34 +3018,77 @@ def _dump_debug(stem: str, fname: str, content: str):
     except Exception as e:
         log.warning(f"[debug] write failed {fname}: {e}")
 
+
+def _sanitize_structured_diff_semantics(structured_diff_text: str) -> Tuple[str, bool, bool]:
+    """Parse SDIFF JSON text and strip out geometric fields while keeping semantic hints."""
+    try:
+        parsed = json.loads(structured_diff_text)
+    except Exception:
+        return structured_diff_text, False, False
+
+    geom_keys = {"endpoints", "length_px", "angle_deg", "length_um"}
+    removed = False
+
+    def _strip(obj: Any):
+        nonlocal removed
+        if isinstance(obj, dict):
+            for key in list(obj.keys()):
+                if key in geom_keys:
+                    obj.pop(key, None)
+                    removed = True
+                    continue
+                _strip(obj[key])
+        elif isinstance(obj, list):
+            for item in obj:
+                _strip(item)
+
+    _strip(parsed)
+
+    try:
+        sanitized = json.dumps(parsed, ensure_ascii=False, indent=2)
+    except Exception:
+        return structured_diff_text, removed, False
+    return sanitized, removed, True
+
+
 # [NEW] SDIFF -> GPT-OSS 전용 Invoker
 def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_texts: List[str]) -> str:
     """
     SDIFF를 '힌트'로 직접 받는 GPT-OSS 호출기.
-    - '좌표 복사'를 방지하는 강력한 시스템 프롬프트를 사용합니다.
     """
     from langchain_core.messages import SystemMessage, HumanMessage
     llm = _build_gptoss()
 
     # [CRITICAL] SDIFF 직접 주입용 시스템 프롬프트 (방화벽)
+    # [FIX 5] VLM의 'construction_method'를 최우선으로 구현하도록 강제
     sys_msg = (
         "너는 이미지를 분석하는 파이썬 측정 스크립트 생성 전문가다. "
         "너의 유일한 임무는 '지시 프롬프트'(guide_text)에 서술된 **[STRUCTURED_DIFF HINT]**를 **'해석'**하여, "
-        "`--mask_path` 이미지 위에서 실행하는 **알고리즘 코드(예: cv2.findContours, np.where)**로 구현하는 것이다.\\n\\n"
+        "`--mask_path` 이미지 위에서 실행하는 **알고리즘 코드(예: cv2.findContours, cv2.fitLine)**로 구현하는 것이다.\\n\\n"
         
-        "## [매우 중요] SDIFF 사용 규칙 (보안):\\n"
-        "1. [STRUCTURED_DIFF HINT]는 **'시맨틱 힌트'**로만 제공된다.\\n"
-        "2. 너는 `detected_class_hint_start/end`, `paired_red_id`, `semantic` 같은 **'힌트'**만 참조해야 한다.\\n"
-        "3. **`endpoints`, `length_px`, `angle_deg`** 같은 기하학적 정보는 **절대로 사용해서는 안 된다.** (치팅 금지)\\n"
-        "4. 너의 임무는 이 '힌트'를 바탕으로 `cv2.findContours`, `np.where` 등을 사용해 기하학적 정보를 **'처음부터 재계산(re-calculate)'**하는 것이다.\\n"
-        "5. 'Few-Shot 코드'에 `load_sdiff`가 있더라도 무시하고, 이 규칙을 최우선으로 하라.\\n\\n"
+        "## [매우 중요] 기하학 알고리즘 규칙 (필수 준수):\\n"
+        "1. **(최우선 알고리즘)** `red.vlm_refinement.construction_method` 힌트(예: \"Fit top-most points of the 'darkest' class fingers.\")가 있다면, **너는 반드시 이 자연어 알고리즘을 그대로 파이썬 코드로 구현해야 한다.** (예: `darkest` 클래스 마스크에서 **여러** 컴포넌트를 찾아, **각** 컴포넌트의 최상단 점을 `np.vstack`으로 쌓고, `cv2.fitLine` 호출)\\n"
+        "2. **(초록 선 로직)** `green` 블록 각각에 대해 루프를 돈다:\\n"
+        "   a. `green_1`의 힌트(예: `start_is_connected: true`, `end_point_class: 'brightest'`)를 읽는다.\\n"
+        "   b. `start`가 `true`이면, 시작점은 1번의 빨간 선(`red_1`)이다.\\n"
+        "   c. `end_point_class`가 'brightest'이면, `brightest` 클래스 마스크의 **특정 컴포넌트**를 찾아 그 **최하단 점(bottom-most point)**을 찾는다.\\n"
+        "   d. **(법선 계산)** 'red_1'의 법선 벡터(normal vector)를 계산한다.\\n"
+        "   e. **(측정)** `c`의 최하단 점을 `d`의 법선을 사용해 `b`의 'red_1' 선에 투영(projection)하여 **최단 거리**를 계산하고, 이 투영된 점(시작점)과 최하단 점(끝점)으로 `cv2.line`을 그려야 한다.\\n"
 
+        "## [매우 중요] 출력 규칙 (필수 준수):\\n"
+        "1. [STRUCTURED_DIFF HINT]에 `red.count: 1`과 `green.count: 6`이 있다면, 너의 코드는 **반드시 1개의 빨간색 선과 6개의 초록색 선**을 생성해야 한다.\\n"
+        "2. **`overlay.png`에는 절대 `cv2.drawContours`를 사용하지 마라.** 컨투어는 계산에만 사용하고, 최종 오버레이에는 **오직 `cv2.line`**만 사용하라.\\n"
+        "3. 오버레이에는 **오직 빨간색(BGR: 0,0,255)과 초록색(BGR: 0,255,0) 선**만 허용된다. 파란색 등 다른 색을 절대 사용하지 마라.\\n"
+
+        "## [매우 중요] SDIFF 사용 규칙 (보안):\\n"
+        "1. 너는 `vlm_required_classes`, `start_is_connected...`, `vlm_construction_method` 같은 **'시맨틱 힌트'**만 참조해야 한다.\\n"
+        "2. **`endpoints`, `length_px`, `angle_deg`** 같은 기하학적 정보는 **절대로 사용해서는 안 된다.** (치팅 금지)\\n"
+        
         "## [매우 중요] 클래스 값(class_val) 처리 규칙:\\n"
         "1. '지시 프롬프트'의 **[MASK METADATA]** 블록을 반드시 확인하라.\\n"
-        "2. `SDIFF`의 힌트(예: 10, 30, 50)가 `[MASK METADATA]`의 'classes' 리스트에 있는지 확인하고, **올바른 `class_val`을 선택**하여 코드에 사용해야 한다."
+        "2. `SDIFF`의 힌트(예: 'darkest')를 `[MASK METADATA]`의 'classes' 리스트(예: `[10, 30, 50]`)와 매핑하여 **올바른 `class_val`을 선택**하여 코드에 사용해야 한다."
     )
     
-    # User message (guide_text_with_sdiff는 SDIFF JSON + MASK METADATA를 포함)
     user_msg = (
         "아래 지시 프롬프트와 few-shot 텍스트를 바탕으로 전체 파이썬 코드(measure.py)만 출력하세요.\\n"
         "- 필수 인자: --mask_path, --mask_merge_path, --meta_root, --out_dir\\n"
@@ -2861,12 +3129,14 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
 
         image_name = payload.get("image_name")
         # [NEW] Llama4 프롬프트 대신 SDIFF(json 텍스트)를 받음
-        structured_diff_text = payload.get("structured_diff_text", "") 
+        structured_diff_text = payload.get("structured_diff_text", "")
 
         if not image_name or not structured_diff_text:
             return JSONResponse({"ok": False, "error": "image_name and structured_diff_text required"}, status_code=200)
 
         stem = Path(_normalize_name(image_name)).stem
+
+        structured_diff_semantic_text, geom_removed, geom_parsed = _sanitize_structured_diff_semantics(structured_diff_text)
 
         # --- 1. `meta_summary` (클래스 정보) 재조회 (Failsafe용) ---
         meta_sum = {}
@@ -2905,8 +3175,16 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
         # (A) SDIFF 힌트 주입
         full_prompt_list.append("Generate a Python script based on the [STRUCTURED_DIFF] hint below.")
         full_prompt_list.append("Your code MUST be a traditional OpenCV/Numpy algorithm (e.g., cv2.findContours, np.where).")
-        full_prompt_list.append("\n## [STRUCTURED_DIFF HINT]\n")
-        full_prompt_list.append(structured_diff_text) # SDIFF JSON 텍스트
+        full_prompt_list.append("\n## [STRUCTURED_DIFF SEMANTIC HINTS]\n")
+        if geom_parsed:
+            note_line = "(All coordinate fields were removed. Recalculate geometry from the mask.)\n"
+        else:
+            note_line = (
+                "(Structured diff parsing failed server-side; raw payload forwarded. Recalculate geometry from the mask and"
+                " ignore any coordinates if they appear.)\n"
+            )
+        full_prompt_list.append(note_line)
+        full_prompt_list.append(structured_diff_semantic_text)  # 필터링된 SDIFF JSON 텍스트
 
         # (B) MASK METADATA 주입 (Failsafe 힌트)
         if meta_sum:
@@ -2929,6 +3207,13 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 debug_content.append(f"[gptoss_generate_from_sdiff log @ {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
                 debug_content.append("--- 1. SDIFF Hint + MASK METADATA (Combined) ---\n")
                 debug_content.append(full_prompt)
+                if geom_parsed:
+                    removed_msg = "endpoints, length_px, angle_deg, length_um" if geom_removed else "(already absent)"
+                else:
+                    removed_msg = "(parse failed - raw payload forwarded)"
+                debug_content.append(
+                    f"\n[INFO] Geometry fields removed from SDIFF before prompt injection: {removed_msg}\n"
+                )
                 debug_content.append("\n\n--- 2. Few-Shot Code (Injected) ---\n")
                 if fewshot_texts:
                     debug_content.append(fewshot_texts[0])
@@ -3336,6 +3621,3 @@ if __name__ == "__main__":
     log.info(f"GPTOSS_BASE_URL set? {bool(GPTOSS_BASE_URL)} MODEL={GPTOSS_MODEL}")
     log.info(f"QWEN_ENABLE={QWEN_ENABLE} MODEL_ID={QWEN_MODEL_ID} DEVICE={QWEN_DEVICE} DTYPE={QWEN_DTYPE}")
     uvicorn.run(app, host="0.0.0.0", port=port)
-
-
-    
