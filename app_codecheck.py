@@ -3064,26 +3064,15 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_
     sys_msg = (
         "너는 이미지를 분석하는 파이썬 측정 스크립트 생성 전문가다. "
         "너의 유일한 임무는 '지시 프롬프트'(guide_text)에 서술된 **[STRUCTURED_DIFF HINT]**를 **'해석'**하여, "
-        "`--mask_path` 이미지 위에서 실행하는 **알고리즘 코드(예: cv2.findContours, cv2.fitLine)**로 구현하는 것이다.\\n\\n"
+        "`--mask_path` 이미지 위에서 실행하는 **알고리즘 코드(예: cv2.findContours, np.where)**로 구현하는 것이다.\\n\\n"
         
-        "## [매우 중요] 기하학 알고리즘 규칙 (필수 준수):\\n"
-        "1. **(최우선 알고리즘)** `red.vlm_refinement.construction_method` 힌트(예: \"Fit top-most points of the 'darkest' class fingers.\")가 있다면, **너는 반드시 이 자연어 알고리즘을 그대로 파이썬 코드로 구현해야 한다.** (예: `darkest` 클래스 마스크에서 **여러** 컴포넌트를 찾아, **각** 컴포넌트의 최상단 점을 `np.vstack`으로 쌓고, `cv2.fitLine` 호출)\\n"
-        "2. **(초록 선 로직)** `green` 블록 각각에 대해 루프를 돈다:\\n"
-        "   a. `green_1`의 힌트(예: `start_is_connected: true`, `end_point_class: 'brightest'`)를 읽는다.\\n"
-        "   b. `start`가 `true`이면, 시작점은 1번의 빨간 선(`red_1`)이다.\\n"
-        "   c. `end_point_class`가 'brightest'이면, `brightest` 클래스 마스크의 **특정 컴포넌트**를 찾아 그 **최하단 점(bottom-most point)**을 찾는다.\\n"
-        "   d. **(법선 계산)** 'red_1'의 법선 벡터(normal vector)를 계산한다.\\n"
-        "   e. **(측정)** `c`의 최하단 점을 `d`의 법선을 사용해 `b`의 'red_1' 선에 투영(projection)하여 **최단 거리**를 계산하고, 이 투영된 점(시작점)과 최하단 점(끝점)으로 `cv2.line`을 그려야 한다.\\n"
-
-        "## [매우 중요] 출력 규칙 (필수 준수):\\n"
-        "1. [STRUCTURED_DIFF HINT]에 `red.count: 1`과 `green.count: 6`이 있다면, 너의 코드는 **반드시 1개의 빨간색 선과 6개의 초록색 선**을 생성해야 한다.\\n"
-        "2. **`overlay.png`에는 절대 `cv2.drawContours`를 사용하지 마라.** 컨투어는 계산에만 사용하고, 최종 오버레이에는 **오직 `cv2.line`**만 사용하라.\\n"
-        "3. 오버레이에는 **오직 빨간색(BGR: 0,0,255)과 초록색(BGR: 0,255,0) 선**만 허용된다. 파란색 등 다른 색을 절대 사용하지 마라.\\n"
-
         "## [매우 중요] SDIFF 사용 규칙 (보안):\\n"
-        "1. 너는 `vlm_required_classes`, `start_is_connected...`, `vlm_construction_method` 같은 **'시맨틱 힌트'**만 참조해야 한다.\\n"
-        "2. **`endpoints`, `length_px`, `angle_deg`** 같은 기하학적 정보는 **절대로 사용해서는 안 된다.** (치팅 금지)\\n"
-        
+        "1. [STRUCTURED_DIFF HINT]는 **'시맨틱 힌트'**로만 제공된다.\\n"
+        "2. 너는 `detected_class_hint_start/end`, `paired_red_id`, `semantic` 같은 **'힌트'**만 참조해야 한다.\\n"
+        "3. **`endpoints`, `length_px`, `angle_deg`** 같은 기하학적 정보는 **절대로 사용해서는 안 된다.** (치팅 금지)\\n"
+        "4. 너의 임무는 이 '힌트'를 바탕으로 `cv2.findContours`, `np.where` 등을 사용해 기하학적 정보를 **'처음부터 재계산(re-calculate)'**하는 것이다.\\n"
+        "5. 'Few-Shot 코드'에 `load_sdiff`가 있더라도 무시하고, 이 규칙을 최우선으로 하라.\\n\\n"
+
         "## [매우 중요] 클래스 값(class_val) 처리 규칙:\\n"
         "1. '지시 프롬프트'의 **[MASK METADATA]** 블록을 반드시 확인하라.\\n"
         "2. `SDIFF`의 힌트(예: 'darkest')를 `[MASK METADATA]`의 'classes' 리스트(예: `[10, 30, 50]`)와 매핑하여 **올바른 `class_val`을 선택**하여 코드에 사용해야 한다."
