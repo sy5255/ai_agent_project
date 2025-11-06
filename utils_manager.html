@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <title>Utils 라이브러리 관리자</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root{--bg:#f6f7fb; --text:#212529; --panel:#ffffff; --border:#e6e9ef; --accent:#2f5eea;}
+        body{margin:0; background:var(--bg); color:var(--text); font-family:system-ui, sans-serif; padding:16px;}
+        .container{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+        .panel{background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px;}
+        h2{margin:0 0 10px 0; font-size:18px;}
+        .textarea{display:block; width:100%; height:75vh; border:1px solid var(--border); border-radius:10px; background:#fff; font-family:monospace; font-size:13px; line-height:1.45; padding:10px; resize:vertical;}
+        .btn{appearance:none; cursor:pointer; border:1px solid var(--border); border-radius:8px; background:#fff; color:var(--text); padding:8px 12px; font-size:13px; font-weight:600;}
+        .btn-primary{background:var(--accent); color:#fff; border-color:var(--accent);}
+        .btn-danger{background:#fdecec; color:#c52222; border-color:#f8d0d0;}
+        .top-bar{display:flex; gap:10px; margin-bottom:16px;}
+        .status{font-size:13px; color:#555; padding:8px;}
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <button id="btnLoad" class="btn">새로고침</button>
+        <button id="btnSaveGolden" class="btn btn-primary">1. 핵심 라이브러리 저장</button>
+        <button id="btnPruneStaging" class="btn btn-danger">2. 후보군 정리 (동기화)</button>
+        <span id="status" class="status"></span>
+    </div>
+
+    <div class="container">
+        <div class="panel">
+            <h2>✅ measurement_utils.py (핵심 라이브러리)</h2>
+            <p style="font-size:13px; color:#555; margin:-5px 0 10px 0;">검증된 함수만 수동으로 관리합니다. (수정 후 '저장' 클릭)</p>
+            <textarea id="golden_lib" class="textarea" spellcheck="false"></textarea>
+        </div>
+        <div class="panel">
+            <h2>⚠️ potential_utils.py (후보군)</h2>
+            <p style="font-size:13px; color:#555; margin:-5px 0 10px 0;">AI가 생성한 새 함수가 여기에 쌓입니다. (읽기 전용)</p>
+            <textarea id="staging_lib" class="textarea" readonly></textarea>
+        </div>
+    </div>
+
+    <script>
+        const $=(id)=>document.getElementById(id);
+        const goldenLib=$('golden_lib'), stagingLib=$('staging_lib'), status=$('status');
+
+        async function loadLibs() {
+            status.textContent = '로딩 중...';
+            try {
+                const r = await fetch('/utils/get_all');
+                const d = await r.json();
+                if (d.ok) {
+                    goldenLib.value = d.golden_content || '';
+                    stagingLib.value = d.staging_content || '';
+                    status.textContent = '로드 완료';
+                } else {
+                    status.textContent = `로드 실패: ${d.error}`;
+                }
+            } catch (e) {
+                status.textContent = `요청 실패: ${e.message}`;
+            }
+        }
+
+        $('btnLoad').addEventListener('click', loadLibs);
+
+        $('btnSaveGolden').addEventListener('click', async () => {
+            if (!confirm('measurement_utils.py 파일을 덮어쓰시겠습니까?\n이 파일은 AI가 호출하는 핵심 라이브러리입니다.')) return;
+            status.textContent = '저장 중...';
+            try {
+                const r = await fetch('/utils/save_golden', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ content: goldenLib.value })
+                });
+                const d = await r.json();
+                status.textContent = d.ok ? '핵심 라이브러리 저장 완료' : `저장 실패: ${d.error}`;
+            } catch (e) {
+                status.textContent = `요청 실패: ${e.message}`;
+            }
+        });
+
+        $('btnPruneStaging').addEventListener('click', async () => {
+            if (!confirm('후보군(potential_utils.py) 파일을 정리(Prune)합니다.\n' +
+                '핵심 라이브러리(measurement_utils.py)에 이미 존재하는 함수를 후보군에서 제거합니다.\n' +
+                '이 작업 전에, 유용한 함수를 후보군에서 핵심 라이브러리로 수동 복사했는지 확인하세요.')) return;
+            status.textContent = '정리 중...';
+            try {
+                const r = await fetch('/utils/prune_staging', { method: 'POST' });
+                const d = await r.json();
+                if (d.ok) {
+                    status.textContent = `후보군 정리 완료: ${d.pruned_count}개 함수 제거됨`;
+                    await loadLibs(); // 정리 후 목록 새로고침
+                } else {
+                    status.textContent = `정리 실패: ${d.error}`;
+                }
+            } catch (e) {
+                status.textContent = `요청 실패: ${e.message}`;
+            }
+        });
+
+        loadLibs(); // 페이지 첫 로드
+    </script>
+</body>
+</html>

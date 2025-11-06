@@ -1,3 +1,6 @@
+import os
+import ast
+import json5
 import json
 import logging
 import os
@@ -57,6 +60,11 @@ FEWSHOT_DIR = Path(os.getenv("FEWSHOT_DIR", str(BASE_DIR / "fewshot_repo"))).res
 # Scribble 폴더 (검은 배경에 빨강/초록 선만 있는 GT)
 SCRIBBLE_DIR = Path(os.getenv("SCRIBBLE_DIR", r"D:\aip-expert\dataset\dataset_updated\scribble")).resolve()
 
+# [NEW] Utils 라이브러리 경로
+MEASUREMENT_UTILS_PATH = Path(os.getenv("MEASUREMENT_UTILS_PATH", str(BASE_DIR / "measurement_utils.py"))).resolve()
+POTENTIAL_UTILS_PATH = Path(os.getenv("POTENTIAL_UTILS_PATH", str(BASE_DIR / "potential_utils.py"))).resolve()
+
+
 # Gemma3 API 환경변수 (없으면 None)
 GEMMA_BASE_URL = os.getenv("GEMMA_BASE_URL", "http://gemma3/v1")
 GEMMA_MODEL = os.getenv("GEMMA_MODEL", "google/gemma-3-27b-it")  # 예: "Qwen/Qwen-VL-8B-Thinking" 대체 가능
@@ -68,7 +76,7 @@ GEMMA_USER_TYPE = os.getenv("GEMMA_USER_TYPE", "ss")
 # -----------------------------
 # Llama-4 / gpt-oss 사내 API (선택적)
 # -----------------------------
-LLAMA4_BASE_URL = os.getenv("LLAMA4_BASE_URL", "http://llama-4/maverick/v1")  # v1까지
+LLAMA4_BASE_URL = os.getenv("LLAMA4_BASE_URL", "http://llama-4/maverick/v1")  # v1까지 
 LLAMA4_MODEL = os.getenv("LLAMA4_MODEL", "meta-llama/llama-4-maverick-17b-128e-instruct")
 #LLAMA_MODEL_SCOUT    = os.getenv("LLAMA_MODEL_SCOUT", "meta-llama/llama-4-scout-17b-16e-instruct")
 LLAMA4_X_DEP_TICKET = os.getenv("LLAMA4_X_DEP_TICKET", "12345") 
@@ -86,7 +94,7 @@ GPTOSS_USER_TYPE = os.getenv("GPTOSS_USER_TYPE", "ss")
 # 최대 이미지 수 제한 (OpenAI 호환: 5장)
 MAX_IMAGES_PER_PROMPT = 5
 
-# OpenAI 호환 키(사내 게이트웨이에서 요구될 수 있음)
+
 #os.environ.setdefault("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", "dummy-key"))
 os.environ['OPENAI_API_KEY'] = 'api_key'
 
@@ -1359,6 +1367,11 @@ def _safe_invoke_gptoss_for_code(guide_text: str, fewshot_texts: List[str]) -> s
         "`mask_path` 이미지 위에서 실행하는 **알고리즘 코드(예: cv2.findContours, cv2.fitLine)**로 구현하는 것이다."
         "마크다운 코드펜스는 절대 사용하지 말 것.\\n\\n"
         
+        "## [매우 중요] 알고리즘 준수 규칙 (필수 준수):\\n" # [NEW SECTION]
+        "1. **(최우선 준수)** 너는 '지시 프롬프트'의 'PIPELINE STEPS' 또는 'PSEUDOCODE' 섹션에 명시된 **자연어 알고리즘을 반드시 문자 그대로(literally) 구현**해야 한다.\\n"
+        "2. **(대체 금지)** 만약 'PIPELINE STEPS'가 '...상위 40% 밴드... 최상단 피크 4개...'와 같이 **복잡한 로직**을 지시했다면, 너는 이를 **절대** '모든 점 찾기'(`topmost_points`) 같은 **간단한 로직으로 임의 변경(대체)해서는 안 된다.**\\n"
+        "3. **(그룹핑 준수)** 'PIPELINE STEPS'가 '...3개의 간격(Interval)마다... 2개의 라인...' 같은 **그룹핑 로직**을 지시했다면, 너의 코드는 반드시 이 `for interval in intervals:` 구조를 따라야 한다.\\n"
+
         "## [매우 중요] 기하학 알고리즘 규칙 (필수 준수):\\n"
         "1. **(최우선 알고리즘)** '지시 프롬프트'의 'PIPELINE STEPS' 또는 'PSEUDOCODE' 섹션에 **자연어 알고리즘**(예: '...4개 핑거의 최상단 점을 피팅...')이 명시되어 있다면, **너는 반드시 그 자연어 알고리즘을 그대로 파이썬 코드로 구현해야 한다.** (예: `darkest` 클래스 마스크에서 **여러** 컴포넌트를 찾아, **각** 컴포넌트의 최상단 점을 `np.vstack`으로 쌓고, `cv2.fitLine` 호출)\\n"
         "2. **(법선 계산)** 만약 '지시 프롬프트'가 빨간 선과 초록 선의 '법선' 또는 '수직' 관계를 암시한다면, 너의 코드는 `cv2.fitLine`으로 계산된 빨간 선의 벡터(vx, vy)를 기반으로 **법선 벡터(-vy, vx)**를 계산하고, 이를 사용해 **최단 거리를 투영(projection)**해야 한다.\\n"
@@ -1375,7 +1388,7 @@ def _safe_invoke_gptoss_for_code(guide_text: str, fewshot_texts: List[str]) -> s
     
     user_msg = (
         "아래 지시 프롬프트와 few-shot 텍스트를 바탕으로 전체 파이썬 코드(measure.py)만 출력하세요.\\n"
-        "- 필수 인자: --mask_path, --mask_merge_path, --meta_root, --out_dir\\n"
+        "- 필수 인자: --mask_path, --meta_root, --out_dir\\n"
         "- out_dir에 overlay.png, measurements.csv 생성\\n"
         "- meta_utils.__wrap_load_pixel_scale_um(mask_path, meta_root)는 (umx, umy, classes, meta_path) 4개 값 반환으로 가정\\n"
         "- draw_text 기본 False, line_thickness 기본 5 등 사용자 옵션 반영\\n"
@@ -1403,8 +1416,11 @@ def _safe_invoke_gptoss_for_code(guide_text: str, fewshot_texts: List[str]) -> s
 # 이 구조는 Qwen에게 "무엇을 채워야 하는지" 알려주는 '틀'입니다.
 def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: List[str]) -> str:
     """
-    [CHANGED] Qwen이 'red_1' 연결 여부(true/false)와 'end_point' 클래스를
-    'cv_hint_to_correct'를 참조하여 추론하도록 프롬프트 '틀' 수정
+    [CRITICAL FIX 14]
+    VLM(Qwen) 프롬프트 수정:
+    - VLM이 '시각적 사실'(연결 여부, ID)만 판단하도록 유지.
+    - [NEW] VLM이 'construction_method' 외에, 'grouping_logic'과 'geometric_relationship'을
+      '풍부한 자연어'로 설명하도록 질문을 고도화합니다.
     """
     import json
     
@@ -1413,6 +1429,13 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
 
     json_prompt_structure_obj = {
         "analysis_summary": "One-sentence summary of the measurement task.",
+        
+        # [CHANGED] 그룹핑 로직을 더 상세히 질문
+        "grouping_logic": {
+            "description": "Are GREEN measures grouped (e.g., '3 intervals, 2 lines per interval') or 6 'independent' lines?",
+            "interval_definition": "If grouped by 'intervals', what defines the interval? (e.g., 'Between the 4 red anchor points', 'U-grooves')",
+            "geometric_relationship": "CRITICAL: What is the geometric relationship between red and green lines? (e.g., 'Green lines are perpendicular/normal to the red line', 'Green lines are all vertical')"
+        },
         "red_guides_refined": [],
         "green_measures_refined": []
     }
@@ -1423,15 +1446,12 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
         for line in cv_red_lines:
             json_prompt_structure_obj["red_guides_refined"].append({
                 "id": line.get("id"),
-                "cv_hint_geometric_fact": {
-                    "orientation": line.get("orientation")
-                },
-                "cv_hint_to_correct": {
-                    "detected_class_hint_by_location": line.get("detected_class_hint") # 예: 50 (This hint is likely WRONG)
-                },
+                "cv_hint_geometric_fact": {"orientation": line.get("orientation")},
+                "cv_hint_to_correct": {"detected_class_hint_by_location": line.get("detected_class_hint")},
                 "vlm_refinement": {
                     "purpose": "Describe purpose (e.g., 'Horizontal reference line').",
-                    "construction_method": "CRITICAL: How to build this line? (e.g., 'Fit top-most points of the 4 'darkest' class fingers', 'Find center-line of 'brightest' class').",
+                    # [CHANGED] "어떻게" 만드는지 구체적으로 설명하도록 요구
+                    "construction_method": "CRITICAL (Detailed): How to build this line? (e.g., 'Fit top-most points of the 4 'darkest' class fingers', 'Find center-line of 'brightest' class', 'Find all 'darkest' pixels and fit a line')",
                     "required_classes": f"CRITICAL: List of brightness descriptors needed. {desc_options_str}. {desc_list_str}"
                 }
             })
@@ -1442,24 +1462,33 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
     try:
         cv_green_lines = cv_sdiff.get("green_lines_detail", [])
         for line in cv_green_lines:
+            
+            cv_start_hint_val = line.get("detected_class_hint_start")
+            cv_end_hint_val = line.get("detected_class_hint_end")
+
             json_prompt_structure_obj["green_measures_refined"].append({
                 "id": line.get("id"),
                 "cv_hint_geometric_fact": {
                     "orientation": line.get("orientation"),
                     "semantic": line.get("semantic"),
-                    "paired_red_id": line.get("paired_red_id")
                 },
-                "cv_hint_to_correct": { # [PROMPT] 이 힌트들을 VLM이 검증해야 함
-                    "detected_class_hint_start": line.get("detected_class_hint_start"), # 예: 50 (Likely WRONG)
-                    "detected_class_hint_end": line.get("detected_class_hint_end")     # 예: 10 (Likely CORRECT)
+                "cv_hint_to_correct": { 
+                    "detected_class_hint_start": cv_start_hint_val,
+                    "detected_class_hint_end": cv_end_hint_val
                 },
                 "vlm_refinement": {
-                    # [NEW PROMPT] 'red_1' 연결 여부를 VLM이 추론
-                    "start_is_connected_to_red_guide": "CRITICAL: Does the start point visually connect to 'red_1'? (true/false)",
-                    "end_is_connected_to_red_guide": "CRITICAL: Does the end point visually connect to 'red_1'? (true/false)",
-                    # [NEW PROMPT] 연결되지 않은 경우, 어떤 클래스에서 시작/끝나는지
-                    "start_point_class": f"If start is NOT connected, which brightness descriptor does it start from? (Use 'cv_hint_to_correct' if it seems right, e.g., 'darkest', null). {desc_list_str}",
-                    "end_point_class": f"If end is NOT connected, which brightness descriptor does it end at? (Use 'cv_hint_to_correct' if it seems right, e.g., 'brightest', null). {desc_list_str}"
+                    "group_id": "What group ID does this line belong to? (Based on 'grouping_logic', e.g., 'interval_1', 'independent_3')",
+                    
+                    # [KEPT] VLM은 '시각적 사실'만 판단
+                    "start_is_connected_to_red_guide": "CRITICAL: Does the start point visually connect to *any* red guide line? (true/false)",
+                    "end_is_connected_to_red_guide": "CRITICAL: Does the end point visually connect to *any* red guide line? (true/false)",
+
+                    "connected_red_guide_id_start": "If 'start_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
+                    "connected_red_guide_id_end": "If 'end_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
+                    
+                    # [NEW] 그린 라인 '생성 알고리즘' 설명 요구
+                    "construction_method_start": "CRITICAL (Detailed): How should the START point be calculated? (e.g., 'Projected perpendicularly onto the connected red line', 'Find centroid of start_class', 'Find max-y point of start_class')",
+                    "construction_method_end": "CRITICAL (Detailed): How should the END point be calculated? (e.g., 'Find max-y point of end_class within the interval', 'Find centroid of end_class')"
                 }
             })
     except Exception as e:
@@ -1607,7 +1636,7 @@ def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribb
                     return_tensors="pt"
                 ).to(dev)
 
-            gen_kwargs = dict(max_new_tokens=1024)
+            gen_kwargs = dict(max_new_tokens=2048)
             with torch.no_grad():
                 out = model.generate(**inputs, **gen_kwargs)
 
@@ -1816,7 +1845,7 @@ def _vl_prompt_blocks(mask_path: Path, merge_path: Path, scribble_path: Optional
     if fewshot_texts:
         blocks.append({"type":"text","text":"[FEW-SHOT TEXTS]\n"+"\\n\\n".join(fewshot_texts)})
 
-    # [CHANGED] VLM(Llama4)의 시스템 프롬프트 (0번 섹션 인지하도록 수정)
+    # [CHANGED] VLM(Llama4)의 시스템 프롬프트 (0번 섹션 인지 및 '알고리즘 번역' 규칙 추가)
     sys_prompt = (
         "너는 '코드 LLM에게 줄 지시 프롬프트'를 작성하는 비서다. "
         "너는 방금 '0) IMAGE SUMMARY' (Qwen 분석)와 '[STRUCTURED_DIFF (CV Facts)]'를 받았다." # [CHANGED]
@@ -1834,23 +1863,23 @@ def _vl_prompt_blocks(mask_path: Path, merge_path: Path, scribble_path: Optional
         
         "## [매우 중요] 측정 알고리즘 추론 규칙 (CV 힌트 우선):\\n"
         "### 1. RED 가이드라인 (SDIFF.red):\\n"
-        "1. **(의도)** '0) IMAGE SUMMARY' (Qwen JSON)에서 `red_guides.relationship_to_mask` (예: 'Fitted to... class 10')를 확인하여 **'생성 기준 클래스'**를 파악하라.\\n" # [CHANGED]
-        "2. **(사실)** `SDIFF.red.lines[i].detected_class_hint` (예: 50)를 확인하여 이 선의 **'실제 위치 클래스'**를 파악하라.\\n"
-        "3. **(지시)** 'PIPELINE STEPS'에 이 두 정보를 **'알고리즘 로직'**으로 변환하라. (예: '`class_val=10`의 최상단 점들을 찾아 `class 50` 영역에 가이드라인을 그린다.')\\n"
+        "1. **(최우선 지시)** '0) IMAGE SUMMARY' (Qwen JSON)의 `red_guides_refined.vlm_refinement.construction_method` (예: 'Fit top-most points of the 4 'darkest' class fingers')를 확인하라.\\n"
+        "2. **(알고리즘 번역)** 만약 `construction_method`가 'top 4 peaks' 또는 '상위 밴드' 같은 **복잡한 알고리즘**을 명시한다면, 너는 'PIPELINE STEPS'에 이 알고리즘을 **'여러 단계의 구체적인 CV 로직'**으로 '번역'해야 한다.\\n"
+        "3. **(나쁜 예 - 요약 금지)** 'PIPELINE STEPS: 1. class 10으로 라인을 피팅합니다.' -> [금지! 정보 누락]\\n"
+        "4. **(좋은 예 - 구체적 번역)** 'PIPELINE STEPS: 1. 마스크 상위 40% 밴드를 자릅니다. 2. 밴드 내 class 10의 컴포넌트를 찾습니다. 3. 각 컴포넌트의 최상단 피크(peak)를 찾습니다. 4. 이 상위 4개의 피크들로 `cv2.fitLine`을 수행합니다.' -> [필수!]\\n"
+        "5. **(힌트)** `SDIFF.red.lines[i].detected_class_hint` (예: 10)는 이 로직에 사용될 *클래스 값*을 암시한다.\\n"
 
         "### 2. GREEN 측정선 (SDIFF.green):\\n"
-        "1. **(사실)** `SDIFF.green.lines` 목록을 분석하라.\\n"
-        "2. **(사실)** `detected_class_hint_start` (예: 50)와 `detected_class_hint_end` (예: 10)를 확인하라.\\n"
-        "3. **(사실)** `paired_red_id` (예: 'red_1')와 `SDIFF.red.lines[0].detected_class_hint` (예: 50)를 확인하라.\\n"
-        "4. **(추론)** 만약 Green의 `start_hint` (50)가 Red의 `hint` (50)와 *일치*하고 `paired_red_id`가 존재하면, 이 측정은 **'위에서 계산한 Red 가이드라인'에서 시작**한 것이다.\\n"
-        "5. **(추론)** 만약 Green의 `start_hint` (예: 10)가 Red의 `hint` (50)와 *불일치*하거나 `paired_red_id`가 없다면, 이 측정은 **'Mask Class 10'에서 시작**한 것이다.\\n"
-        "6. **(지시)** 'PIPELINE STEPS'에 이 추론 결과를 **'알고리즘 로직'**으로 변환하라. (예: 'red_1 가이드라인에서 class 10 영역까지 측정', 또는 'class 10 영역에서 class 30 영역까지 측정')"
+        "1. **(그룹핑)** '0) IMAGE SUMMARY'의 `grouping_logic` (예: 'pairs', 'interval_definition')과 각 Green 라인의 `group_id`를 확인하라.\\n"
+        "2. **(알고리즘 번역)** 'PIPELINE STEPS'에 이 그룹핑 로직을 '알고리즘'으로 번역하라. (예: '1. Red 앵커 사이의 3개 간격(Interval)을 정의합니다. 2. 각 간격(Interval)마다 루프를 돕니다. 3. 각 루프에서 class 30과 class 50에 대한 2개의 라인을 계산합니다.')\\n"
+        "3. **(힌트)** `detected_class_hint_start` (예: 'red_1')와 `detected_class_hint_end` (예: 10)를 사용하여 각 라인의 시작/끝 알고리즘을 추론하라.\\n"
     )
     # [변경 끝]
     
     blocks = [{"type":"text","text":_GUARD_HEADER+"\\n\\n"+sys_prompt}] + blocks
     blocks.append({"type":"text","text": user_text})
     return blocks
+
 # -----------------------------
 # VL (Llama4/Gemma3) — 4장 입력 + STRUCTURED_DIFF
 # -----------------------------
@@ -2115,6 +2144,7 @@ def _parse_qwen_json(raw_text: str) -> Dict:
     """
     Qwen의 raw_text (json 또는 'assistant\n{...}' 형식)를 파싱합니다.
     [FIX] 'assistant' 키워드 뒤의 '마지막' JSON 블록을 정확히 파싱하도록 수정합니다.
+    [NEW] 표준 json 대신 'json5'를 사용하여 후행 쉼표, 주석 등 비표준 JSON을 너그럽게 파싱합니다.
     """
     import json, re
     if not raw_text:
@@ -2125,23 +2155,17 @@ def _parse_qwen_json(raw_text: str) -> Dict:
         assistant_keyword = "assistant"
         
         # 'assistant' 키워드를 찾아 그 이후의 텍스트만 추출
-        # [FIX] re.IGNORECASE와 \b (단어 경계)를 사용하여 안정성 확보
         parts = re.split(f"\\b{assistant_keyword}\\b\\s*", raw_text, maxsplit=1, flags=re.IGNORECASE)
         
         if len(parts) > 1:
-            # 'assistant' 키워드 뒤의 텍스트를 가져옴
             json_str = parts[1].strip()
         else:
-            # 'assistant' 키워드가 없는 경우, 전체 텍스트에서 마지막 JSON을 찾음 (Fallback)
             matches = list(re.finditer(r"\{[\s\S]*\}", raw_text, re.MULTILINE))
             if matches:
                 json_str = matches[-1].group(0)
             else:
-                # 'assistant'는 있지만 JSON이 없는 경우
                 json_str = raw_text 
 
-        # [FIX] 추출된 텍스트(json_str)에서 마지막 JSON 블록을 다시 찾음
-        # (Qwen이 JSON 뒤에 추가 텍스트를 뱉는 경우 대비)
         final_matches = list(re.finditer(r"\{[\s\S]*\}", json_str, re.MULTILINE))
         if not final_matches:
             log.warning(f"[Qwen] No JSON block found after 'assistant' or in fallback: {raw_text[:200]}")
@@ -2149,7 +2173,18 @@ def _parse_qwen_json(raw_text: str) -> Dict:
             
         final_json_str = final_matches[-1].group(0)
         
-        return json.loads(final_json_str)
+        # [CHANGED] json.loads -> json5.loads
+        return json5.loads(final_json_str)
+
+    except Exception as e:
+        log.warning(f"[Qwen] Failed to parse raw_text JSON (with json5): {e}")
+        log.debug(f"[Qwen] Failing raw_text: {raw_text}")
+        return {}
+
+    except Exception as e:
+        log.warning(f"[Qwen] Failed to parse raw_text JSON (with json5): {e}")
+        log.debug(f"[Qwen] Failing raw_text: {raw_text}")
+        return {}
 
     except Exception as e:
         log.warning(f"[Qwen] Failed to parse raw_text JSON: {e}")
@@ -2435,7 +2470,7 @@ def _gptoss_prompt_for_code(guide_text: str, fewshot_texts: List[str]) -> str:
     return (
         _GUARD_HEADER + "\\n\\n" +
         "아래의 지시 프롬프트와 few-shot 텍스트를 바탕으로, 완전한 파이썬 측정 스크립트(measure.py)를 출력하세요.\\n"
-        "- 실행 인자: --mask_path, --mask_merge_path, --meta_root, --out_dir (필수)\\n"
+        "- 실행 인자: --mask_path, --meta_root, --out_dir (필수)\\n"
         "- overlay.png와 measurements.csv를 out_dir에 생성\\n"
         "- meta_utils.__wrap_load_pixel_scale_um(mask_path, meta_root)는 (umx,umy,classes,meta_path) 4개 값 반환 가정\\n" # <-- 수정됨
         "- draw_text 기본 False, 선 두께 기본 5\\n"
@@ -2760,15 +2795,18 @@ async def code_run(payload: dict = Body(...)):
     measure_py = run_dir / "measure.py"
     measure_py.write_text(code_text, encoding="utf-8")
 
-    # meta_utils.py 준비 (기존 유지)
+    # --- [CHANGED] meta_utils.py 및 measurement_utils.py 복사 로직 강화 ---
+    
+    # 1. meta_utils.py 복사 (기존 로직 유지)
     meta_utils_dest = run_dir / "meta_utils.py"
-    candidates = []
-    envp = os.getenv("META_UTILS_PATH")
-    if envp: candidates.append(Path(envp))
-    candidates += [BASE_DIR/"meta_utils.py", Path(IMAGE_DIR).parent/"meta_utils.py", Path.cwd()/"meta_utils.py"]
-    picked = next((c for c in candidates if c.exists() and c.is_file()), None)
-    if picked:
-        meta_utils_dest.write_text(picked.read_text(encoding="utf-8"), encoding="utf-8")
+    candidates_meta = []
+    envp_meta = os.getenv("META_UTILS_PATH")
+    if envp_meta: candidates_meta.append(Path(envp_meta))
+    candidates_meta += [BASE_DIR/"meta_utils.py", Path(IMAGE_DIR).parent/"meta_utils.py", Path.cwd()/"meta_utils.py"]
+    picked_meta = next((c for c in candidates_meta if c.exists() and c.is_file()), None)
+    
+    if picked_meta:
+        meta_utils_dest.write_text(picked_meta.read_text(encoding="utf-8"), encoding="utf-8")
         txt = meta_utils_dest.read_text(encoding="utf-8")
         if "def __wrap_load_pixel_scale_um" not in txt:
             txt += """
@@ -2786,6 +2824,7 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
 """
             meta_utils_dest.write_text(txt, encoding="utf-8")
     else:
+        # (fallback meta_utils 생성 로직은 기존과 동일)
         meta_utils_dest.write_text(f'''# -*- coding: utf-8 -*-
 import json, os
 from pathlib import Path
@@ -2816,17 +2855,38 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
     return res
 ''', encoding="utf-8")
 
+    # 2. [CHANGED] measurement_utils.py 복사 (meta_utils와 동일한 탐색 로직 사용)
+    utils_dest = run_dir / "measurement_utils.py"
+    candidates_utils = []
+    # (MEASUREMENT_UTILS_PATH 전역 변수를 직접 참조하는 대신, 환경변수와 후보 경로를 탐색)
+    envp_utils = os.getenv("MEASUREMENT_UTILS_PATH") 
+    if envp_utils: candidates_utils.append(Path(envp_utils))
+    candidates_utils += [
+        BASE_DIR / "measurement_utils.py", # app_codecheck.py와 동일 경로
+        Path.cwd() / "measurement_utils.py" # 현재 작업 디렉토리
+    ]
+    picked_utils = next((c for c in candidates_utils if c.exists() and c.is_file()), None)
+
+    if picked_utils:
+        # [FIX] utils_src.exists() 대신 picked_utils를 사용
+        utils_dest.write_text(picked_utils.read_text(encoding="utf-8"), encoding="utf-8")
+        log.info(f"Copied measurement_utils.py from {picked_utils}")
+    else:
+        # [FIX] 전역 변수 대신 탐색 경로를 로그에 남김
+        log.warning(f"measurement_utils.py not found in {candidates_utils}, creating empty fallback.")
+        utils_dest.write_text("# fallback: measurement_utils.py not found\n", encoding="utf-8")
+
+    # --- [기존 로직 계속] ---
     overlay_path = _overlay_path_for(image_name)
     if overlay_path.exists():
         try: overlay_path.unlink()
         except Exception: pass
-
+    
     stem = Path(_normalize_name(image_name)).stem
-
-    # --- [NEW] Ensure structured-diff JSON exists next to the merge image ---
+    
+    # ... (SDIFF JSON 생성 로직은 기존과 동일)
     try:
         sdiff_path = mask_merge_path.with_suffix(".json")
-
         need_write = True
         if sdiff_path.exists():
             try:
@@ -2837,26 +2897,17 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
 
         if need_write:
             sdiff = None
-
-            # (a) 캐시 우선
             try:
                 sdiff = STRUCTURED_DIFF_CACHE.get(image_name)
             except Exception:
                 sdiff = None
 
-            # (b) 없으면 Qwen 또는 색 임계값 기반으로 생성
             if not isinstance(sdiff, dict) or not sdiff:
                 try:
                     scr_path = _scribble_path_for(_normalize_name(image_name))
                     if scr_path and scr_path.exists():
-                        try:
-                            _lazy_load_qwen()
-                        except Exception:
-                            pass
-                        if (_qwen_pipe is not None):
-                            sdiff = _qwen_summarize_scribble(mask_path, mask_merge_path, scr_path)
-                        else:
-                            sdiff = _structured_from_scribble(scr_path)
+                        # (CV-only fallback)
+                        sdiff = _structured_from_scribble(scr_path, 0.0, mask_path)
                     else:
                         sdiff = {
                             "schema":"scribble_v1",
@@ -2879,32 +2930,27 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
                             "merge_name": mask_merge_path.name
                         }
                     }
-
-            # 캐시 동기화 & 메타
+            
             try:
                 sdiff.setdefault("notes", {})
                 sdiff["notes"]["_server_injected"] = True
                 sdiff["notes"]["_expected_path"] = str(sdiff_path)
             except Exception:
                 pass
-
-            # 최종 저장 (merge와 같은 폴더)
             sdiff_path.write_text(json.dumps(sdiff, ensure_ascii=False, indent=2), encoding="utf-8")
-
-            # 캐시에도 반영
             try:
                 STRUCTURED_DIFF_CACHE[image_name] = sdiff
             except Exception:
                 pass
-
     except Exception as e:
         log.warning(f"[run] failed to ensure structured diff JSON: {e}")
 
     def _exec_once():
+        # [CHANGED] --mask_merge_path 인자 제거
         cmd = [
             _python_executable(), str(measure_py),
             "--mask_path", str(mask_path),
-            "--mask_merge_path", str(mask_merge_path),
+            # "--mask_merge_path", str(mask_merge_path), # <-- 이 줄 제거됨
             "--out_dir", str(run_dir),
             "--meta_root", str(META_ROOT),
         ]
@@ -2916,18 +2962,17 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
             return 124, "", f"Timeout: {e}"
         except Exception as e:
             return 125, "", f"Exec failed: {e}"
-
+            
     _set_status(stem, phase="exec", attempt=0, progress=10, label="실행 중…")
-
+    
     rc, stdout, stderr = _exec_once()
 
     try:
         log_path = _run_dir_for(image_name) / "run.log"
         with open(log_path, "w", encoding="utf-8", newline="") as f:
-            # run.log 기록 직후, 단일 CSV 정리도 시도
             try:
                 out_csv = _run_dir_for(image_name) / "measurements.csv"
-                normalize_measurements_csv(out_csv)  # (기존 호출 그대로 유지)
+                normalize_measurements_csv(out_csv)
             except Exception as _e:
                 log.warning(f"[run] csv normalize failed: {_e}")
 
@@ -2937,8 +2982,6 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
         log.warning(f"[run] failed to write run.log: {e}")
 
     exists = (_run_dir_for(image_name) / "overlay.png").exists() or False
-
-    # [NEW] measurements.csv 표준화 시도(성공/실패와 무관)
     norm_ok, norm_msg = _normalize_measurements_csv(_run_dir_for(image_name), image_name)
 
     if rc==0 and exists:
@@ -2950,7 +2993,6 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
             "csv_normalized": norm_ok, "csv_note": norm_msg
         })
 
-    # 자동 수정 루프
     auto_log = []
     auto_fixed = False
     if auto_fix:
@@ -3002,7 +3044,7 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
         "first_stdout": auto_log[0].get("stdout") if auto_log else None,
         "first_stderr": auto_log[0].get("stderr") if auto_log else None
     })
-
+    
 def _dump_debug(stem: str, fname: str, content: str):
     """RUN_DIR/<stem>/<fname>에 안전하게 디버그 텍스트를 기록."""
     try:
@@ -3019,76 +3061,138 @@ def _dump_debug(stem: str, fname: str, content: str):
         log.warning(f"[debug] write failed {fname}: {e}")
 
 
-def _sanitize_structured_diff_semantics(structured_diff_text: str) -> Tuple[str, bool, bool]:
-    """Parse SDIFF JSON text and strip out geometric fields while keeping semantic hints."""
-    try:
-        parsed = json.loads(structured_diff_text)
-    except Exception:
-        return structured_diff_text, False, False
+def _sanitize_structured_diff_semantics(structured_diff: dict) -> Tuple[str, bool, bool]:
+    """
+    [CRITICAL FIX 15]
+    GPT-OSS로 전달되는 SDIFF 딕셔너리에서 '치팅'을 유발하는
+    'endpoints' 키만 재귀적으로 제거합니다.
+    (다른 유용한 CV 힌트(length_px, angle_deg, detected_class_hint 등)는 보존합니다.)
+    """
+    if not isinstance(structured_diff, dict):
+        return "{}", False, False
 
-    geom_keys = {"endpoints", "length_px", "angle_deg", "length_um"}
+    # 딥 카피를 통해 원본 sdiff_dict 객체(캐시)가 수정되는 것을 방지
+    try:
+        parsed = json.loads(json.dumps(structured_diff)) # Deep copy
+    except Exception as e:
+        log.error(f"SDIFF deep copy failed: {e}")
+        return "{}", False, False # 실패 시 빈 객체 반환
+
+    # [CHANGED] 'endpoints'만 제거
+    geom_keys = {
+        "endpoints"
+    }
     removed = False
 
     def _strip(obj: Any):
         nonlocal removed
         if isinstance(obj, dict):
+            # 'notes.raw_text'는 VLM 힌트가 있어 GPT-OSS가 봐야 하므로, 이 안의 내용은 제거하지 않음
+            if "raw_text" in obj: 
+                pass
+
             for key in list(obj.keys()):
                 if key in geom_keys:
                     obj.pop(key, None)
                     removed = True
                     continue
+                
+                # notes.raw_text는 VLM 힌트의 '진실의 원천'이므로 절대 제거하면 안 됨
+                if key == "raw_text":
+                    continue
+                    
                 _strip(obj[key])
         elif isinstance(obj, list):
             for item in obj:
                 _strip(item)
 
-    _strip(parsed)
+    _strip(parsed) # 'endpoints' 키 제거 실행
 
     try:
+        # GPT-OSS에 전달할, 'endpoints'가 제거된 깨끗한 JSON 문자열 생성
         sanitized = json.dumps(parsed, ensure_ascii=False, indent=2)
-    except Exception:
-        return structured_diff_text, removed, False
+    except Exception as e:
+        log.error(f"Failed to re-serialize sanitized SDIFF: {e}")
+        return "{}", removed, False # 직렬화 실패 시 빈 객체 반환
+        
     return sanitized, removed, True
 
 
 # [NEW] SDIFF -> GPT-OSS 전용 Invoker
 def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_texts: List[str]) -> str:
     """
-    SDIFF를 '힌트'로 직접 받는 GPT-OSS 호출기.
+    [CRITICAL FIX 17]
+    - (Top-1 main()이 제거되었으므로) '표준 CSV 헤더'와 'argparse' 구조를
+      시스템 프롬프트에 명시적으로 지시합니다.
+    - [NEW] SDIFF의 'raw_text'에 포함된 '자연어 설명'(construction_method, geometric_relationship)을
+      '유일한 진실'로 삼아 'measurement_utils'의 함수를 '선택'하도록 강제합니다.
+    - 'final_class_hint_...' 힌트 타입 분기 로직을 지시합니다.
+    - '저수준 CV 함수' 금지 규칙 완화 (main에서만 금지)
+    - 'meta_utils' 4개 반환값 명시 (유지)
     """
     from langchain_core.messages import SystemMessage, HumanMessage
     llm = _build_gptoss()
 
-    # [CRITICAL] SDIFF 직접 주입용 시스템 프롬프트 (방화벽)
-    # [FIX 5] VLM의 'construction_method'를 최우선으로 구현하도록 강제
+    # [CRITICAL] 2-Utils + SDIFF 힌트 + CSV/Argparse/Main-Flow 규칙 시스템 프롬프트
     sys_msg = (
-        "너는 이미지를 분석하는 파이썬 측정 스크립트 생성 전문가다. "
-        "너의 유일한 임무는 '지시 프롬프트'(guide_text)에 서술된 **[STRUCTURED_DIFF HINT]**를 **'해석'**하여, "
-        "`--mask_path` 이미지 위에서 실행하는 **알고리즘 코드(예: cv2.findContours, np.where)**로 구현하는 것이다.\\n\\n"
+        "너는 `meta_utils`와 `measurement_utils` 라이브러리를 사용하여 'SDIFF 힌트'를 구현하는 파이썬 코드 생성 전문가다.\n\n"
         
-        "## [매우 중요] SDIFF 사용 규칙 (보안):\\n"
-        "1. [STRUCTURED_DIFF HINT]는 **'시맨틱 힌트'**로만 제공된다.\\n"
-        "2. 너는 `detected_class_hint_start/end`, `paired_red_id`, `semantic` 같은 **'힌트'**만 참조해야 한다.\\n"
-        "3. **`endpoints`, `length_px`, `angle_deg`** 같은 기하학적 정보는 **절대로 사용해서는 안 된다.** (치팅 금지)\\n"
-        "4. 너의 임무는 이 '힌트'를 바탕으로 `cv2.findContours`, `np.where` 등을 사용해 기하학적 정보를 **'처음부터 재계산(re-calculate)'**하는 것이다.\\n"
-        "5. 'Few-Shot 코드'에 `load_sdiff`가 있더라도 무시하고, 이 규칙을 최우선으로 하라.\\n\\n"
+        "## [매우 중요] 출력 형식 규칙 (필수 준수):\n"
+        "1. **(Argparse)** 스크립트는 `if __name__ == '__main__':` 블록과 `argparse`를 사용하여 실행되어야 한다. 필수 인자는 `--mask_path`, `--meta_root`, `--out_dir`이다.\n"
+        "2. **(CSV 헤더)** 생성되는 `measurements.csv` 파일은 **반드시** 다음 13개의 표준 헤더와 순서를 가져야 한다:\n"
+        "   `['measure_item', 'group_id', 'index', 'value_nm', 'sx', 'sy', 'ex', 'ey', 'meta_tag', 'component_label', 'image_name', 'run_id', 'note']`\n"
+        "3. **(CSV 값)** `value_nm`은 '숫자'여야 하며, `sx, sy, ex, ey`는 '정수'여야 한다.\n"
+        "4. **(Overlay)** `overlay.png` 파일이 `out_dir`에 반드시 생성되어야 한다.\n\n"
 
-        "## [매우 중요] 클래스 값(class_val) 처리 규칙:\\n"
-        "1. '지시 프롬프트'의 **[MASK METADATA]** 블록을 반드시 확인하라.\\n"
-        "2. `SDIFF`의 힌트(예: 'darkest')를 `[MASK METADATA]`의 'classes' 리스트(예: `[10, 30, 50]`)와 매핑하여 **올바른 `class_val`을 선택**하여 코드에 사용해야 한다."
+        "## [매우 중요] SDIFF 힌트 해석 규칙 (필수 준수):\n"
+        "1. **(진실의 원천)** 너의 **유일한 진실(Source of Truth)**은 '지시 프롬프트'에 포함된 SDIFF 힌트, 특히 `notes.raw_text.assistant` 블록의 **'자연어 설명'**이다.\n"
+        "2. **(RED 라인 알고리즘)** `red_guides_refined.construction_method` (예: 'Fit top-most points of the 4 'darkest' class fingers')를 읽고, `measurement_utils`에서 **이 설명과 가장 일치하는 함수** (예: `fit_line_from_top_peaks`)를 **'선택'하여 호출**하라.\n"
+        "3. **(GREEN 라인 알고리즘)** `grouping_logic.geometric_relationship` (예: 'Green lines are perpendicular/normal...')과 `green_measures_refined.construction_method_start` (예: 'Projected perpendicularly...')를 읽고, **이 설명과 일치하는 함수** (예: `project_point_onto_line`, `max_point_in_interval_for_class`)를 **'선택'하여 호출**하라.\n"
+        "4. **(힌트 타입 분기)** Green 라인의 `final_class_hint_start`/`end` 힌트(숫자 또는 문자열 ID)는 이 알고리즘에 필요한 '인자'로 사용하라:\n"
+        "   - **IF `hint == \"red_1\"` (문자열):** 이 점은 빨간 선(`red_line`)에 연결되어야 한다. (예: `measurement_utils.project_point_onto_line(...)`)\n"
+        "   - **IF `hint == 50` (숫자):** 이 점은 해당 숫자 클래스(`class_val=50`)에서 찾아야 한다. (예: `measurement_utils.max_point_in_interval_for_class(...)`)\n\n"
+
+        "## [매우 중요] main() 함수 구현 규칙 (필수 준수):\n"
+        "1. `parser = argparse.ArgumentParser(...)`를 정의하고 `args = parser.parse_args()`를 호출하여 인자를 파싱한다.\n"
+        "2. `gray = measurement_utils.read_gray(args.mask_path)`를 호출한다.\n"
+        "3. `umx, umy, classes, meta_path = meta_utils.__wrap_load_pixel_scale_um(args.mask_path, args.meta_root)`를 호출하여 **반드시 4개의 값**을 받는다. (**`args.meta_root`** 전달을 잊지 마라!)\n"
+        "4. `pixel_scale_um = umx` (혹은 `umy`)로 스케일을 정의한다.\n"
+        "5. `results_df, overlay_image = measure_logic(gray, pixel_scale_um, ...)`와 같이 당신이 정의한 메인 로직 함수를 호출한다.\n"
+        "6. `out_dir = Path(args.out_dir)`로 출력 경로를 설정한다.\n"
+        "7. `results_df.to_csv(out_dir / 'measurements.csv', ...)`로 CSV를 저장한다.\n"
+        "8. `cv2.imwrite(str(out_dir / 'overlay.png'), overlay_image)`로 오버레이를 저장한다.\n\n"
+
+        "## [매우 중요] 라이브러리 (필수 준수):\n"
+        "1. **(라이브러리 구분)** 너는 **두 개의 라이브러리**를 명확히 구분해야 한다:\n"
+        "   - **`import meta_utils`**: **오직** `umx, umy, classes, meta_path = meta_utils.__wrap_load_pixel_scale_um(...)` (4개 반환값) 호출에만 사용한다.\n"
+        "   - **`import measurement_utils`**: **모든 CV 알고리즘** (예: `fit_line_from_top_peaks`, `read_gray`, `mask_eq_value` 등)에 사용한다.\n\n"
+        
+        "## [매우 중요] 신규 함수 생성 규칙 (필수 준수):\n"
+        "1. **(알고리즘 발명)** 만약 SDIFF 힌트 구현에 필요한 함수가 `measurement_utils`나 `meta_utils`에 **명백히 없다면**, SDIFF 힌트를 기반으로 해당 헬퍼 함수를 **'이 스크립트 최상단에'** `def`로 **직접 '생성'**하라.\n"
+        "2. **(호출 규칙)** `measurement_utils`에 있는 함수는 `measurement_utils.func_name()`으로 호출하고, `meta_utils`에 있는 함수는 `meta_utils.func_name()`으로 호출하고, **당신이 이 스크립트 내부에 직접 생성한 함수**는 `func_name()`으로 **'로컬 호출'**하라.\n"
+        "3. **(유사 함수 확인)** 새 함수를 '발명'하기 전에, `measurement_utils`에 **유사한 기능의 함수가 있는지 반드시 확인**하라. (예: `read_grayscale_image` 대신 `measurement_utils.read_gray`를 사용하라).\n\n"
+
+        "## [매우 중요] 코드 품질 규칙 (필수 준수):\n"
+        "1. **(Clean Main)** 너의 **`main()` 함수**와 `if __name__ == '__main__':` 블록은 반드시 '깨끗하게' 유지되어야 한다. 이 영역에서는 `cv2.findContours`, `np.where`, `cv2.fitLine` 같은 **저수준 CV/Numpy 함수를 절대 직접 호출하지 마라.**\n"
+        "2. **(Helper 함수 호출)** `main()` 함수는 **오직 고수준 헬퍼 함수** (예: `measurement_utils.fit_line...` 또는 당신이 생성한 `def my_new_helper(...)`)만 호출해야 한다.\n"
+        "3. **(헬퍼 함수 내부)** 당신이 **새로 생성하는 헬퍼 함수** (예: `def my_new_helper(...)`) **내부**에서는 `cv2.findContours` 같은 저수준 CV 함수를 **사용해도 된다.**"
     )
     
     user_msg = (
-        "아래 지시 프롬프트와 few-shot 텍스트를 바탕으로 전체 파이썬 코드(measure.py)만 출력하세요.\\n"
-        "- 필수 인자: --mask_path, --mask_merge_path, --meta_root, --out_dir\\n"
-        "- out_dir에 overlay.png, measurements.csv 생성\\n"
-        "- meta_utils.__wrap_load_pixel_scale_um(mask_path, meta_root)는 (umx, umy, classes, meta_path) 4개 값 반환으로 가정\\n"
-        "- draw_text 기본 False, line_thickness 기본 5 등 사용자 옵션 반영\\n"
-        "- 절대 설명 문장 없이, 순수 파이썬 코드만 출력\\n\\n"
-        "=== 지시 프롬프트 (SDIFF HINTS + METADATA) ===\\n"
-        f"{guide_text_with_sdiff}\\n\\n"
-        "=== few-shot 텍스트 (Style Reference Only) ===\\n"
-        + ("\\n\\n".join(fewshot_texts) if fewshot_texts else "(없음)")
+        "아래 '지시 프롬프트'(SDIFF 힌트)를 `import measurement_utils`와 `import meta_utils`를 '호출'하여 구현하세요.\n"
+        "- **[유일한 진실]** `notes.raw_text`의 '자연어 설명'(construction_method, geometric_relationship)을 '유일한 진실'로 삼으세요.\n"
+        "- **[함수 선택]** 이 '자연어 설명'과 가장 일치하는 함수(예: `fit_line_from_top_peaks`)를 `measurement_utils`에서 '선택'하여 호출하세요.\n"
+        "- **[흐름 준수]** 'main() 함수 구현 규칙' 섹션에 명시된 8단계 흐름을 반드시 따라야 합니다. (특히 `meta_utils` 호출 시 `args.meta_root` 전달)\n"
+        "- **[CSV 준수]** `measurements.csv`는 반드시 `['measure_item', 'group_id', ...]` 13개 표준 헤더를 사용해야 합니다.\n"
+        "- `measurement_utils`에 힌트와 일치하는 함수가 없으면, 해당 함수를 '이 스크립트 최상단에' `def`로 직접 생성하고 '로컬 호출'하세요.\n"
+        "- `main()` 함수 내부에서는 저수준 CV 함수(cv2.findContours 등)를 쓰지 마세요.\n"
+        "- `mask_merge_path` 인자는 절대 사용하지 마세요.\n"
+        "- 절대 마크다운 코드펜스 없이 순수 파이썬 코드만 출력하세요.\n\n"
+        
+        "=== 지시 프롬프트 (SDIFF HINTS + METADATA - The Single Source of Truth) ===\n"
+        f"{guide_text_with_sdiff}\n\n"
+        "=== few-shot 텍스트 (참고용 구조) ===\n"
+        + "(제거됨. `argparse`와 표준 CSV 헤더, `main()` 함수 흐름 규칙을 직접 구현하세요.)"
     )
 
     resp = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=user_msg)])
@@ -3103,32 +3207,34 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_
     resp2 = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=retry_user)])
     code2 = _extract_text_from_aimessage(resp2).strip()
     return _strip_code_fence(code2)
-        
+
 # [NEW] SDIFF -> GPT-OSS 직접 생성 엔드포인트
 @app.post("/gptoss/generate_from_sdiff")
 async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
     """
-    [NEW WORKFLOW] Llama4를 건너뛰고 SDIFF를 GPT-OSS에 '힌트'로 직접 전달합니다.
-    - SDIFF의 `endpoints` 등 기하 정보는 '무시'하고
-    - SDIFF의 `class_hints` 등 '시맨틱' 정보만 사용하도록 프롬프트 엔지니어링
+    [CRITICAL FIX 17]
+    - SDIFF 힌트 정제 로직은 유지합니다.
+    - _sanitize_structured_diff_semantics가 'endpoints'만 제거하도록 호출합니다.
+    - [RESTORED & FIXED] Top-1 'main()' 구조를 '복원'하되,
+      AST를 사용해 'main()' 함수의 '내부 로직'을 제거(pass)하여 '오염'을 방지합니다.
+      (ValueError 및 NameError 동시 해결)
     """
     try:
         import json, os
         from pathlib import Path
+        import ast 
 
         image_name = payload.get("image_name")
-        # [NEW] Llama4 프롬프트 대신 SDIFF(json 텍스트)를 받음
-        structured_diff_text = payload.get("structured_diff_text", "")
+        structured_diff_text = payload.get("structured_diff_text", "") # 원본 SDIFF (JSON 문자열)
 
         if not image_name or not structured_diff_text:
             return JSONResponse({"ok": False, "error": "image_name and structured_diff_text required"}, status_code=200)
 
         stem = Path(_normalize_name(image_name)).stem
 
-        structured_diff_semantic_text, geom_removed, geom_parsed = _sanitize_structured_diff_semantics(structured_diff_text)
-
-        # --- 1. `meta_summary` (클래스 정보) 재조회 (Failsafe용) ---
+        # --- 1. `meta_summary` (클래스 정보) 및 '밝기 맵' 생성 ---
         meta_sum = {}
+        brightness_map = {} 
         if image_name:
             try:
                 mask_name = _mask_name_from_merge(_normalize_name(image_name))
@@ -3136,101 +3242,209 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                     mask_path = (Path(IMAGE_DIR).parent/"mask"/mask_name).resolve()
                     if mask_path.exists():
                          meta_sum = _meta_summary(mask_path)
+                         classes_present = meta_sum.get("classes", [])
+                         if classes_present:
+                             num_classes = len(classes_present)
+                             if num_classes == 1:
+                                 brightness_map["only_class"] = int(classes_present[0])
+                             else:
+                                 for i, cls_val in enumerate(classes_present):
+                                     if i == 0: desc = "darkest"
+                                     elif i == num_classes - 1: desc = "brightest"
+                                     else: desc = f"middle_gray_{i}"
+                                     brightness_map[desc] = int(cls_val)
             except Exception as e:
-                log.warning(f"Failed to re-fetch meta for GPT-OSS: {e}")
+                log.warning(f"Failed to create brightness map for GPT-OSS: {e}")
 
-        # --- 2. Top-1 Few-shot '전체 코드' 로드 (스타일 참조용) ---
+        # --- 2. SDIFF 힌트 정제 (Python 객체 직접 수정) ---
+        sdiff_dict = {}
+        qwen_json = {}
+        try:
+            sdiff_dict = _parse_qwen_json(structured_diff_text)
+            qwen_json = _parse_qwen_json(sdiff_dict.get("notes", {}).get("raw_text", ""))
+            
+            # 2c. [RED LINE] 힌트 정제
+            red_class_map = {} 
+            qwen_red_lines = qwen_json.get("red_guides_refined", [])
+            red_cv_map = {line.get("id"): line for line in sdiff_dict.get("red", {}).get("lines", [])}
+
+            for qwen_line in qwen_red_lines:
+                line_id = qwen_line.get("id")
+                if not line_id: continue
+                
+                vlm_ref = qwen_line.get("vlm_refinement", {})
+                qwen_req_classes = vlm_ref.get("required_classes", []) 
+                
+                correct_class_val = None
+                if qwen_req_classes and brightness_map:
+                    first_desc = qwen_req_classes[0]
+                    if first_desc in brightness_map:
+                        correct_class_val = brightness_map[first_desc]
+                
+                if correct_class_val is not None:
+                    red_class_map[line_id] = correct_class_val
+                    if line_id in red_cv_map:
+                        original_hint = red_cv_map[line_id].get("detected_class_hint")
+                        if original_hint != correct_class_val:
+                            log.info(f"[GPT-OSS Prep] Resolving RED conflict ({line_id}). Overwriting hint {original_hint} -> {correct_class_val}")
+                            red_cv_map[line_id]["detected_class_hint"] = correct_class_val
+            
+            if "grouping_logic" in qwen_json:
+                sdiff_dict["grouping_logic_vlm"] = qwen_json["grouping_logic"]
+
+            # 2d. [GREEN LINE] "Final Hint" 생성
+            qwen_green_lines = qwen_json.get("green_measures_refined", [])
+            green_cv_map = {line.get("id"): line for line in sdiff_dict.get("green", {}).get("lines", [])}
+
+            for qwen_line in qwen_green_lines:
+                line_id = qwen_line.get("id")
+                if not line_id or line_id not in green_cv_map:
+                    continue
+                
+                vlm_ref = qwen_line.get("vlm_refinement", {})
+                cv_line = green_cv_map[line_id]
+                
+                final_start_hint = None
+                if vlm_ref.get("start_is_connected_to_red_guide") is True:
+                    final_start_hint = vlm_ref.get("connected_red_guide_id_start") # "red_1"
+                else:
+                    final_start_hint = cv_line.get("detected_class_hint_start") # 50
+                
+                final_end_hint = None
+                if vlm_ref.get("end_is_connected_to_red_guide") is True:
+                    final_end_hint = vlm_ref.get("connected_red_guide_id_end") # "red_2"
+                else:
+                    final_end_hint = cv_line.get("detected_class_hint_end") # 10
+
+                cv_line["final_class_hint_start"] = final_start_hint
+                cv_line["final_class_hint_end"] = final_end_hint
+                
+                log.info(f"[GPT-OSS Prep] Final Hint ({line_id}): START={final_start_hint}, END={final_end_hint}")
+
+        except Exception as e:
+            log.error(f"[GPT-OSS Prep] SDIFF conflict resolution or parsing failed: {e}. Passing empty SDIFF to GPT-OSS.")
+            sdiff_dict = {} 
+        
+        # --- 3. [CHANGED] `endpoints` 제거 (파싱된 '객체' 입력) ---
+        structured_diff_semantic_text = "{}"
+        if sdiff_dict: # 파싱/정제에 성공한 경우에만
+            structured_diff_semantic_text, geom_removed, geom_parsed = _sanitize_structured_diff_semantics(sdiff_dict)
+        
+            if not geom_parsed: # (만약 _sanitize_...가 실패한 경우)
+                log.error("[GPT-OSS Prep] _sanitize_structured_diff_semantics FAILED. Passing empty SDIFF to GPT-OSS.")
+                structured_diff_semantic_text = "{}"
+        
+
+        # --- 4. [RESTORED & FIXED] Top-1 'main() 구조' 파싱 (내부 로직 제거) ---
         sels = []
-        fewshot_texts = []
+        fewshot_texts = [] 
         try:
             sels = _select_topk_fewshots_for(image_name, k=1)
+            
             if sels:
-                best_dir = Path(sels[0]["_dir"])
-                code_path = best_dir / "code.py"
-                if code_path.exists():
-                    full_code_str = code_path.read_text(encoding="utf-8", errors="ignore")
-                    preamble = (
-                        "아래는 가장 유사한 측정 코드 예시입니다. "
-                        "이 스타일과 구조를 참고하여 현재 요청에 맞는 코드를 작성하세요: "
-                        "(단, 이 예제에 `load_sdiff`나 `json.load`가 있더라도 절대 따라하지 마세요.)"
-                    )
-                    fewshot_texts = [f"{preamble}\n\n```python\n{full_code_str}\n```"]
+                preamble = (
+                    "아래는 현재 요청과 가장 유사한 코드의 'main() 함수 구조'입니다.\n"
+                    "파일 입출력, argparse, `main()` 호출 구조를 참고하세요.\n"
+                    "[경고] 이 예제의 '내부 로직'은 오래되었거나 틀릴 수 있습니다.\n"
+                    "로직은 오직 SDIFF 힌트와 `measurement_utils` 라이브러리만으로 재구성해야 합니다.\n"
+                )
+                
+                top1_code_path = Path(sels[0]["_dir"]) / "code.py"
+                main_structure = ""
+                
+                if top1_code_path.exists():
+                    top1_code_str = top1_code_path.read_text(encoding="utf-8", errors="ignore")
+                    try:
+                        parsed_code = ast.parse(top1_code_str)
+                        
+                        # [FIX] main 함수의 '본체(body)'를 'pass'로 교체하여 로직 오염 방지
+                        main_func_found = False
+                        for node in parsed_code.body:
+                            if isinstance(node, ast.FunctionDef) and node.name == 'main':
+                                node.body = [ast.Pass()] # 내부 로직을 'pass'로 대체
+                                main_structure += ast.unparse(node) + "\n\n"
+                                main_func_found = True
+                                break
+                        
+                        if not main_func_found: # main() 함수가 없으면 argparse라도 찾기
+                             main_structure += "\n".join([line for line in top1_code_str.splitlines() if "argparse.ArgumentParser" in line or "ap.add_argument" in line])
+
+                        # __name__ == "__main__" 블록은 그대로 유지
+                        main_block = next((n for n in parsed_code.body if (
+                            isinstance(n, ast.If) and 
+                            isinstance(n.test, ast.Compare) and
+                            isinstance(n.test.left, ast.Name) and n.test.left.id == '__name__'
+                        )), None)
+                        
+                        if main_block:
+                            main_structure += ast.unparse(main_block) + "\n"
+
+                    except Exception as e_ast:
+                        log.warning(f"[gptoss_generate_sdiff] ast parsing failed: {e_ast}")
+                        main_structure = "(Top-1 main() 파싱 실패)"
+
+                if main_structure:
+                    fewshot_texts = [f"{preamble}\n\n```python\n{main_structure}\n```"]
+                else:
+                    fewshot_texts = ["(Top-1 main() 구조를 찾지 못함)"]
+
         except Exception as e:
-            log.warning(f"[gptoss_generate_sdiff] fewshot load failed: {e}")
+            log.warning(f"[gptoss_generate_sdiff] fewshot(k=1) main parse failed: {e}")
 
-        # --- 3. [NEW] SDIFF + MASK METADATA 결합 ---
+        # --- 5. SDIFF + MASK METADATA 결합 ---
         full_prompt_list = []
-        
-        # (A) SDIFF 힌트 주입
         full_prompt_list.append("Generate a Python script based on the [STRUCTURED_DIFF] hint below.")
-        full_prompt_list.append("Your code MUST be a traditional OpenCV/Numpy algorithm (e.g., cv2.findContours, np.where).")
-        full_prompt_list.append("\n## [STRUCTURED_DIFF SEMANTIC HINTS]\n")
-        if geom_parsed:
-            note_line = "(All coordinate fields were removed. Recalculate geometry from the mask.)\n"
-        else:
-            note_line = (
-                "(Structured diff parsing failed server-side; raw payload forwarded. Recalculate geometry from the mask and"
-                " ignore any coordinates if they appear.)\n"
-            )
+        full_prompt_list.append("Your code MUST import and use functions from `measurement_utils` and `meta_utils`.")
+        full_prompt_list.append("\n## [STRUCTURED_DIFF SEMANTIC HINTS (Refined)]\n")
+        
+        note_line = "(All geometric coordinates (endpoints) have been removed. Recalculate geometry from the mask.)\n"
         full_prompt_list.append(note_line)
-        full_prompt_list.append(structured_diff_semantic_text)  # 필터링된 SDIFF JSON 텍스트
+        full_prompt_list.append(structured_diff_semantic_text)  # 'endpoints'가 제거된 SDIFF 텍스트
 
-        # (B) MASK METADATA 주입 (Failsafe 힌트)
         if meta_sum:
             try:
                 meta_json_str = json.dumps(meta_sum, ensure_ascii=False, indent=2)
                 full_prompt_list.append("\n\n### MASK METADATA (Data/Hints for Algorithm)\n")
-                full_prompt_list.append("IMPORTANT: Use the 'classes' list (e.g., [10, 30, 50]) to select the correct `class_val` for your algorithm.")
                 full_prompt_list.append(meta_json_str)
             except Exception as e:
                 log.warning(f"Failed to serialize Meta Summary for prompt: {e}")
 
         full_prompt = "\n".join(full_prompt_list)
         
-        # --- 4. 로깅 ---
+        # --- 6. 로깅 ---
         if os.getenv("DEBUG_GPTOSS_PROMPT", "1") == "1":
             try:
-                # (로그 파일명을 다르게 하여 충돌 방지)
                 debug_path = (RUN_DIR / stem / "gptoss_gen_sdiff.debug.txt") 
                 debug_content = []
                 debug_content.append(f"[gptoss_generate_from_sdiff log @ {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
-                debug_content.append("--- 1. SDIFF Hint + MASK METADATA (Combined) ---\n")
+                debug_content.append("--- 1. SDIFF Hint + MASK METADATA (Combined & Corrected & Sanitized) ---\n") 
                 debug_content.append(full_prompt)
-                if geom_parsed:
-                    removed_msg = "endpoints, length_px, angle_deg, length_um" if geom_removed else "(already absent)"
-                else:
-                    removed_msg = "(parse failed - raw payload forwarded)"
-                debug_content.append(
-                    f"\n[INFO] Geometry fields removed from SDIFF before prompt injection: {removed_msg}\n"
-                )
-                debug_content.append("\n\n--- 2. Few-Shot Code (Injected) ---\n")
+                debug_content.append("\n\n--- 2. Few-Shot 'main()' Structure (RESTORED - Body Sanitized) ---\n")
                 if fewshot_texts:
                     debug_content.append(fewshot_texts[0])
                 else:
-                    debug_content.append("(No few-shot code injected)")
+                    debug_content.append("(No few-shot structure injected)")
                 debug_path.write_text("\n".join(debug_content), encoding="utf-8")
             except Exception as e:
                 log.warning(f"[gptoss_generate_sdiff] debug log failed: {e}")
 
-        # --- 5. [NEW] 전용 Invoker 호출 ---
+        # --- 7. 전용 Invoker 호출 ---
         code = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt, fewshot_texts).strip()
         code = _strip_code_fence(code)
 
-        # (이하 로깅 및 반환은 gptoss_generate와 동일)
+        # (이하 로깅 및 반환은 동일)
         if os.getenv("DEBUG_GPTOSS_PROMPT", "1") == "1":
             _dump_debug(
                 stem,
-                "gptoss_gen_sdiff.debug.txt", # 로그 파일명 통일
+                "gptoss_gen_sdiff.debug.txt", 
                 "\n--- 3. Model Output (Head) ---\n" + (code[:4000] if code else "(empty)") + "\n"
             )
 
         if not code.strip():
             return JSONResponse({"ok": False, "error": "LLM returned empty code."}, status_code=200)
 
-        # (치팅/복사 방지 룰은 동일하게 적용)
         violation = _reject_merge_copying(code)
         if violation:
-            # (violation 피드백 및 재시도 로직은 gptoss_generate와 동일하게 유지)
             feedback = (
                 "You violated NO-COLOR-COPY rule: " + violation + "\n"
                 "Rewrite the entire script STRICTLY following the SDIFF HINTS and MASK METADATA:\n"
@@ -3244,15 +3458,13 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
             if code2.strip():
                 violation2 = _reject_merge_copying(code2)
                 if not violation2:
-                    code = code2 # 재시도 성공 시 코드 교체
+                    code = code2
             
-            # (재시도 후에도 위반 시, 원본 코드를 반환)
-
         return JSONResponse({"ok": True, "code": code})
     except Exception as e:
         log.exception("[gptoss/generate_from_sdiff] failed")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=200)
-
+    
 @app.post("/gptoss/generate")
 async def gptoss_generate(payload: dict = Body(...)):
     """
@@ -3466,11 +3678,17 @@ async def code_save(payload: dict = Body(...)):
     save_path = LABEL_DIR / save_name
     save_path.write_text(code_text, encoding="utf-8")
 
+    # --- [NEW] AI가 생성한 새 함수를 'potential_utils.py'에 적재 ---
+    try:
+        _update_potential_utils(code_text)
+    except Exception as e:
+        log.warning(f"[code/save] Failed to update potential_utils.py: {e}")
+    # --- [NEW] 끝 ---
+
     fewshot_id=None
     if add_to_fewshot:
         fewshot_id = _register_fewshot_case(image_name, code_text, include_ppt, ppt_id)
     return JSONResponse({"status":"saved","path":str(save_path),"filename": save_name,"fewshot_id": fewshot_id})
-
 
 @app.post("/code/undo")
 async def code_undo(payload: dict = Body(...)):
@@ -3579,6 +3797,134 @@ def _register_fewshot_case(image_name: str, code_text: str, include_ppt: bool, p
     (item_dir/"item.json").write_text(json.dumps(item, ensure_ascii=False, indent=2), encoding="utf-8")
     return item["id"]
 
+# --- [NEW] Utils Manager 헬퍼 함수 ---
+def _get_defined_function_names(file_path: Path) -> set:
+    """AST를 사용해 파일에서 함수 정의 이름만 파싱합니다."""
+    if not file_path.exists():
+        return set()
+    try:
+        code = file_path.read_text(encoding="utf-8")
+        parsed = ast.parse(code)
+        return {node.name for node in ast.walk(parsed) if isinstance(node, ast.FunctionDef)}
+    except Exception as e:
+        log.error(f"Failed to parse AST for {file_path}: {e}")
+        return set()
+
+def _update_potential_utils(new_code_text: str):
+    """
+    새로 저장된 코드(new_code_text)를 파싱하여,
+    'measurement_utils'나 'potential_utils'에 아직 없는
+    "새로운" 헬퍼 함수를 'potential_utils.py'에 추가(append)합니다.
+    """
+    try:
+        # 1. 기존 함수 목록 로드
+        golden_funcs = _get_defined_function_names(MEASUREMENT_UTILS_PATH)
+        staging_funcs = _get_defined_function_names(POTENTIAL_UTILS_PATH)
+        
+        # 2. 새 코드 파싱
+        parsed_code = ast.parse(new_code_text)
+        
+        new_functions_to_add = []
+        
+        for node in ast.walk(parsed_code):
+            if isinstance(node, ast.FunctionDef):
+                func_name = node.name
+                # main 함수, 내부 함수, 비공개 함수 등은 무시
+                if func_name == "main" or func_name.startswith("_"):
+                    continue
+                
+                # 이미 라이브러리에 존재하는 함수는 무시
+                if func_name in golden_funcs or func_name in staging_funcs:
+                    continue
+                
+                # [NEW FUNCTION]
+                func_source = ast.unparse(node) # Python 3.9+
+                new_functions_to_add.append(func_source)
+                staging_funcs.add(func_name) # 중복 추가 방지
+        
+        # 3. 새 함수가 있으면 potential_utils.py에 추가
+        if new_functions_to_add:
+            log.info(f"Found {len(new_functions_to_add)} new functions to stage: {list(staging_funcs)}")
+            # 파일 끝에 추가
+            with open(POTENTIAL_UTILS_PATH, "a", encoding="utf-8") as f:
+                f.write("\n\n# --- Appended by /code/save ---\n\n")
+                f.write("\n\n".join(new_functions_to_add))
+                f.write("\n")
+                
+    except ImportError:
+        log.error("Failed to unparse AST, 'ast.unparse' requires Python 3.9+.")
+    except Exception as e:
+        log.error(f"Error during _update_potential_utils: {e}")
+
+
+# --- [NEW] Utils Manager 라우트 ---
+
+@app.get("/utils_manager", response_class=HTMLResponse)
+async def get_utils_manager(request: Request):
+    """Utils 관리자 UI 페이지를 서빙합니다."""
+    return templates.TemplateResponse("utils_manager.html", {"request": request})
+
+@app.get("/utils/get_all")
+async def utils_get_all():
+    """두 라이브러리 파일의 현재 내용을 읽어옵니다."""
+    try:
+        golden = MEASUREMENT_UTILS_PATH.read_text(encoding="utf-8") if MEASUREMENT_UTILS_PATH.exists() else ""
+        staging = POTENTIAL_UTILS_PATH.read_text(encoding="utf-8") if POTENTIAL_UTILS_PATH.exists() else ""
+        return JSONResponse({"ok": True, "golden_content": golden, "staging_content": staging})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+@app.post("/utils/save_golden")
+async def utils_save_golden(payload: dict = Body(...)):
+    """핵심 라이브러리(measurement_utils.py)를 수동 저장합니다."""
+    content = payload.get("content")
+    if content is None:
+        return JSONResponse({"ok": False, "error": "content is missing"})
+    try:
+        MEASUREMENT_UTILS_PATH.write_text(content, encoding="utf-8")
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+@app.post("/utils/prune_staging")
+async def utils_prune_staging():
+    """
+    후보군(potential) 라이브러리에서
+    핵심(measurement) 라이브러리에 이미 존재하는 함수를 제거(정리)합니다.
+    """
+    try:
+        golden_funcs = _get_defined_function_names(MEASUREMENT_UTILS_PATH)
+        if not POTENTIAL_UTILS_PATH.exists():
+            return JSONResponse({"ok": True, "pruned_count": 0})
+
+        staging_code = POTENTIAL_UTILS_PATH.read_text(encoding="utf-8")
+        staging_ast = ast.parse(staging_code)
+        
+        pruned_nodes = []
+        pruned_count = 0
+        
+        for node in staging_ast.body:
+            if isinstance(node, ast.FunctionDef):
+                if node.name not in golden_funcs:
+                    pruned_nodes.append(node) # 보존
+                else:
+                    pruned_count += 1 # 제거
+            else:
+                 pruned_nodes.append(node) # 주석, import 등 보존
+        
+        # ast.unparse가 가능한 환경 (Python 3.9+)을 가정
+        new_staging_code = ast.unparse(pruned_nodes)
+        POTENTIAL_UTILS_PATH.write_text(new_staging_code, encoding="utf-8")
+        
+        log.info(f"Pruned {pruned_count} functions from potential_utils.py")
+        return JSONResponse({"ok": True, "pruned_count": pruned_count})
+        
+    except ImportError:
+        return JSONResponse({"ok": False, "error": "ast.unparse requires Python 3.9+"})
+    except Exception as e:
+        log.exception("Failed to prune staging utils")
+        return JSONResponse({"ok": False, "error": str(e)})
+
 # -----------------------------
 # 메인
 # -----------------------------
@@ -3610,3 +3956,4 @@ if __name__ == "__main__":
     log.info(f"GPTOSS_BASE_URL set? {bool(GPTOSS_BASE_URL)} MODEL={GPTOSS_MODEL}")
     log.info(f"QWEN_ENABLE={QWEN_ENABLE} MODEL_ID={QWEN_MODEL_ID} DEVICE={QWEN_DEVICE} DTYPE={QWEN_DTYPE}")
     uvicorn.run(app, host="0.0.0.0", port=port)
+
