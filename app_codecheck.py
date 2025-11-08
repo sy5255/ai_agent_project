@@ -3065,8 +3065,8 @@ def _sanitize_structured_diff_semantics(structured_diff: dict) -> Tuple[str, boo
     """
     [CRITICAL FIX 15]
     GPT-OSS로 전달되는 SDIFF 딕셔너리에서 '치팅'을 유발하는
-    'endpoints' 키만 재귀적으로 제거합니다.
-    (다른 유용한 CV 힌트(length_px, angle_deg, detected_class_hint 등)는 보존합니다.)
+    'endpoints' 키 + [CHANGED] 혼동을 유발하는 'detected_...' 힌트를 재귀적으로 제거합니다.
+    (다른 유용한 CV 힌트(length_px, angle_deg, final_class_hint...)는 보존합니다.)
     """
     if not isinstance(structured_diff, dict):
         return "{}", False, False
@@ -3078,9 +3078,12 @@ def _sanitize_structured_diff_semantics(structured_diff: dict) -> Tuple[str, boo
         log.error(f"SDIFF deep copy failed: {e}")
         return "{}", False, False # 실패 시 빈 객체 반환
 
-    # [CHANGED] 'endpoints'만 제거
-    geom_keys = {
-        "endpoints"
+    # [CHANGED] 'endpoints' 외에 혼동을 유발하는 모든 'detected_' 힌트 제거
+    keys_to_remove = {
+        "endpoints",
+        "detected_class_hint",
+        "detected_class_hint_start",
+        "detected_class_hint_end"
     }
     removed = False
 
@@ -3092,7 +3095,7 @@ def _sanitize_structured_diff_semantics(structured_diff: dict) -> Tuple[str, boo
                 pass
 
             for key in list(obj.keys()):
-                if key in geom_keys:
+                if key in keys_to_remove: # <-- [CHANGED] 확장된 세트 사용
                     obj.pop(key, None)
                     removed = True
                     continue
@@ -3106,10 +3109,10 @@ def _sanitize_structured_diff_semantics(structured_diff: dict) -> Tuple[str, boo
             for item in obj:
                 _strip(item)
 
-    _strip(parsed) # 'endpoints' 키 제거 실행
+    _strip(parsed) # 'endpoints' 및 'detected_...' 키 제거 실행
 
     try:
-        # GPT-OSS에 전달할, 'endpoints'가 제거된 깨끗한 JSON 문자열 생성
+        # GPT-OSS에 전달할, 'endpoints'와 'detected_'가 제거된 깨끗한 JSON 문자열 생성
         sanitized = json.dumps(parsed, ensure_ascii=False, indent=2)
     except Exception as e:
         log.error(f"Failed to re-serialize sanitized SDIFF: {e}")
@@ -3122,77 +3125,191 @@ def _sanitize_structured_diff_semantics(structured_diff: dict) -> Tuple[str, boo
 def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_texts: List[str]) -> str:
     """
     [CRITICAL FIX 17]
-    - (Top-1 main()이 제거되었으므로) '표준 CSV 헤더'와 'argparse' 구조를
-      시스템 프롬프트에 명시적으로 지시합니다.
-    - [NEW] SDIFF의 'raw_text'에 포함된 '자연어 설명'(construction_method, geometric_relationship)을
-      '유일한 진실'로 삼아 'measurement_utils'의 함수를 '선택'하도록 강제합니다.
-    - 'final_class_hint_...' 힌트 타입 분기 로직을 지시합니다.
-    - '저수준 CV 함수' 금지 규칙 완화 (main에서만 금지)
-    - 'meta_utils' 4개 반환값 명시 (유지)
+    - [CHANGED] AI가 Top-1 예제에 오염되는 것을 막기 위해,
+      'measurement_utils'의 언급을 '완전히 제거'하고,
+      '정적 뼈대 코드(Static Template)'를 제공하여 AI가 '로직 생성'에만 집중하도록 수정.
     """
     from langchain_core.messages import SystemMessage, HumanMessage
     llm = _build_gptoss()
 
-    # [CRITICAL] 2-Utils + SDIFF 힌트 + CSV/Argparse/Main-Flow 규칙 시스템 프롬프트
+    # [CRITICAL] 13개 표준 헤더 (AI에게 명시적으로 주입)
+    CSV_HEADERS_LIST_STR = (
+        "['measure_item', 'group_id', 'index', 'value_nm', "
+        "'sx', 'sy', 'ex', 'ey', "
+        "'meta_tag', 'component_label', "
+        "'image_name', 'run_id', 'note']"
+    )
+
+    # [CRITICAL] AI에게 제공할 정적 뼈대 코드 (Top-1 예제 대신 사용)
+    # meta_utils는 '반드시' 포함 (4개 값 반환)
+    # measurement_utils는 '완전히' 제거
+    STATIC_TEMPLATE_CODE = f"""
+import os, sys, argparse
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Tuple, List
+
+import cv2
+import numpy as np
+import pandas as pd
+
+# meta_utils는 픽셀 스케일과 클래스 로드를 위해 '필수'입니다.
+from meta_utils import load_pixel_scale_um, find_meta_path
+
+GREEN_COLOR = (0, 255, 0)
+RED_COLOR   = (0, 0, 255)
+WHITE_COLOR = (255, 255, 255)
+
+# [CSV 헤더 규칙] AI는 반드시 이 리스트를 사용해야 합니다.
+CSV_HEADERS = {CSV_HEADERS_LIST_STR}
+
+# ----------------------------------------------------------------------
+# [AI 생성 영역 1] 헬퍼 함수 (Helper Functions)
+# (AI는 SDIFF 힌트를 구현하기 위한 모든 헬퍼 함수를 여기에 '새로 생성'해야 합니다.)
+# (예: def fit_line_to_top_points, def project_point_onto_line, def find_max_y_point 등)
+# ----------------------------------------------------------------------
+
+def read_gray(path: str) -> np.ndarray:
+    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise FileNotFoundError(f'Unable to read image at {{path}}')
+    return img
+
+def mask_eq_value(gray: np.ndarray, val: int, tol: int = 0) -> np.ndarray:
+    if tol <= 0:
+        return (gray == val).astype(np.uint8) * 255
+    lo, hi = max(0, val - tol), min(255, val + tol)
+    return cv2.inRange(gray, lo, hi)
+
+# AI가 여기에 fit_red_line, project_point, max_point_in_class 등을 생성해야 함
+def define_ai_helper_functions():
+    pass
+
+# ----------------------------------------------------------------------
+# [AI 생성 영역 2] 핵심 측정 로직 (Core Measurement Logic)
+# (AI는 이 함수 내부를 '새로 생성'해야 합니다.)
+# ----------------------------------------------------------------------
+
+def measure_logic(
+    gray: np.ndarray,
+    pixel_scale_um_per_px: float,
+    classes: List[int],
+    image_name: str
+) -> Tuple[pd.DataFrame, np.ndarray]:
+    
+    overlay = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    rows = []
+    
+    # [AI 작업]
+    # 1. SDIFF 힌트와 `classes` 리스트를 사용해 'darkest'(classes[0]) 등을 매핑합니다.
+    # 2. SDIFF 힌트의 'construction_method'에 따라,
+    #    AI가 '헬퍼 함수 영역'에 생성한 'def fit_line...' 함수를 호출하여 빨간선을 계산합니다.
+    # 3. 빨간선을 overlay에 그립니다.
+    # 4. SDIFF 힌트의 green_lines를 반복하며:
+    # 5.  `final_class_hint_start` ('red_1' 또는 숫자)와
+    #    `final_class_hint_end` (숫자)에 따라 분기합니다.
+    # 6.  AI가 생성한 `def project_point...` 또는 `def max_point...`를 호출하여 sx, sy, ex, ey를 계산합니다.
+    # 7.  초록선을 overlay에 그립니다.
+    # 8.  결과를 `rows.append(...)` 합니다. (순서는 CSV_HEADERS와 일치해야 함)
+    
+    pass # AI가 이 'pass'를 실제 로직으로 교체해야 함
+    
+    # [CSV 헤더 규칙] AI는 반드시 CSV_HEADERS를 사용해야 합니다.
+    df = pd.DataFrame(rows, columns=CSV_HEADERS)
+    return df, overlay
+
+# ----------------------------------------------------------------------
+# [고정 영역] 메인 CLI (AI는 이 부분을 수정하지 않습니다.)
+# ----------------------------------------------------------------------
+def main():
+    ap = argparse.ArgumentParser(description='AI-generated measurement script')
+    ap.add_argument('--mask_path', type=str, required=True, help='Path to grayscale mask image')
+    ap.add_argument('--meta_root', type=str, required=True, help='Root directory for metadata')
+    ap.add_argument('--out_dir', type=str, required=True, help='Output directory for results')
+    
+    # (argparse는 예제와 다를 수 있으므로, 최소한의 인자만 받도록 단순화)
+    
+    args = ap.parse_args()
+    
+    out_dir = Path(args.out_dir).expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        gray = read_gray(args.mask_path)
+        
+        # [meta_utils 규칙] 4개 값을 반환합니다: (umx, umy, classes_list, meta_path_str)
+        um_per_px_x, um_per_px_y, classes, meta_path = load_pixel_scale_um(args.mask_path, args.meta_root)
+        pixel_scale_um_per_px = um_per_px_x 
+        image_name = Path(args.mask_path).name
+
+        df, overlay = measure_logic(
+            gray,
+            pixel_scale_um_per_px,
+            classes if classes else [10, 30, 50], # 메타에 클래스가 없을 경우 기본값
+            image_name
+        )
+
+        csv_path = out_dir / 'measurements.csv'
+        overlay_path = out_dir / 'overlay.png'
+        
+        # [CSV 헤더 규칙] CSV_HEADERS를 사용하여 저장
+        df.to_csv(csv_path, index=False, columns=CSV_HEADERS)
+        cv2.imwrite(str(overlay_path), overlay)
+
+        # [Unicode 규칙] 'um' 사용
+        print(f"Saved: {{csv_path}} and {{overlay_path}}")
+        print(f"Meta: {{meta_path}} (scale {{pixel_scale_um_per_px}} um/px)")
+
+    except Exception as e:
+        print(f"Error: {{e}}", file=sys.stderr)
+        # 에러 발생 시 빈 CSV 생성 (백엔드 파싱 오류 방지)
+        pd.DataFrame(columns=CSV_HEADERS).to_csv(out_dir / 'measurements.csv', index=False)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+"""
+
+    # [CRITICAL] 새 시스템 프롬프트 (템플릿 + 생성 지시)
     sys_msg = (
-        "너는 `meta_utils`와 `measurement_utils` 라이브러리를 사용하여 'SDIFF 힌트'를 구현하는 파이썬 코드 생성 전문가다.\n\n"
+        f"너는 파이썬 스크립트 생성 전문가다.\n"
+        f"너의 **유일한 임무**는 아래 [Static Template Code]의 'AI 생성 영역' 2곳 (헬퍼 함수, 핵심 로직)을 [New Logic Hint] (SDIFF)에 맞게 **'새로 생성'**하여, **'하나의 완전한 스크립트'**를 완성하는 것이다.\n\n"
         
-        "## [매우 중요] 출력 형식 규칙 (필수 준수):\n"
-        "1. **(Argparse)** 스크립트는 `if __name__ == '__main__':` 블록과 `argparse`를 사용하여 실행되어야 한다. 필수 인자는 `--mask_path`, `--meta_root`, `--out_dir`이다.\n"
-        "2. **(CSV 헤더)** 생성되는 `measurements.csv` 파일은 **반드시** 다음 13개의 표준 헤더와 순서를 가져야 한다:\n"
-        "   `['measure_item', 'group_id', 'index', 'value_nm', 'sx', 'sy', 'ex', 'ey', 'meta_tag', 'component_label', 'image_name', 'run_id', 'note']`\n"
-        "3. **(CSV 값)** `value_nm`은 '숫자'여야 하며, `sx, sy, ex, ey`는 '정수'여야 한다.\n"
-        "4. **(Overlay)** `overlay.png` 파일이 `out_dir`에 반드시 생성되어야 한다.\n\n"
+        f"## [매우 중요] 출력 규칙 (필수 준수):\n"
+        f"1. **(최종 코드)** 너는 [Static Template Code]와 너가 생성한 로직을 '병합'하여 '완전한' 스크립트 '전체'를 '하나의' 파이썬 코드로 출력해야 한다.\n"
+        f"2. **(마크다운 금지)** 절대 마크다운 코드펜스(```)를 사용하지 마라.\n"
+        f"3. **(템플릿 준수)** [Static Template Code]의 `main()` 함수, `argparse`, `CSV_HEADERS` 리스트, `import meta_utils` 호출 로직을 **'절대'** 수정하지 마라.\n\n"
 
-        "## [매우 중요] SDIFF 힌트 해석 규칙 (필수 준수):\n"
-        "1. **(진실의 원천)** 너의 **유일한 진실(Source of Truth)**은 '지시 프롬프트'에 포함된 SDIFF 힌트, 특히 `notes.raw_text.assistant` 블록의 **'자연어 설명'**이다.\n"
-        "2. **(RED 라인 알고리즘)** `red_guides_refined.construction_method` (예: 'Fit top-most points of the 4 'darkest' class fingers')를 읽고, `measurement_utils`에서 **이 설명과 가장 일치하는 함수** (예: `fit_line_from_top_peaks`)를 **'선택'하여 호출**하라.\n"
-        "3. **(GREEN 라인 알고리즘)** `grouping_logic.geometric_relationship` (예: 'Green lines are perpendicular/normal...')과 `green_measures_refined.construction_method_start` (예: 'Projected perpendicularly...')를 읽고, **이 설명과 일치하는 함수** (예: `project_point_onto_line`, `max_point_in_interval_for_class`)를 **'선택'하여 호출**하라.\n"
-        "4. **(힌트 타입 분기)** Green 라인의 `final_class_hint_start`/`end` 힌트(숫자 또는 문자열 ID)는 이 알고리즘에 필요한 '인자'로 사용하라:\n"
-        "   - **IF `hint == \"red_1\"` (문자열):** 이 점은 빨간 선(`red_line`)에 연결되어야 한다. (예: `measurement_utils.project_point_onto_line(...)`)\n"
-        "   - **IF `hint == 50` (숫자):** 이 점은 해당 숫자 클래스(`class_val=50`)에서 찾아야 한다. (예: `measurement_utils.max_point_in_interval_for_class(...)`)\n\n"
-
-        "## [매우 중요] main() 함수 구현 규칙 (필수 준수):\n"
-        "1. `parser = argparse.ArgumentParser(...)`를 정의하고 `args = parser.parse_args()`를 호출하여 인자를 파싱한다.\n"
-        "2. `gray = measurement_utils.read_gray(args.mask_path)`를 호출한다.\n"
-        "3. `umx, umy, classes, meta_path = meta_utils.__wrap_load_pixel_scale_um(args.mask_path, args.meta_root)`를 호출하여 **반드시 4개의 값**을 받는다. (**`args.meta_root`** 전달을 잊지 마라!)\n"
-        "4. `pixel_scale_um = umx` (혹은 `umy`)로 스케일을 정의한다.\n"
-        "5. `results_df, overlay_image = measure_logic(gray, pixel_scale_um, ...)`와 같이 당신이 정의한 메인 로직 함수를 호출한다.\n"
-        "6. `out_dir = Path(args.out_dir)`로 출력 경로를 설정한다.\n"
-        "7. `results_df.to_csv(out_dir / 'measurements.csv', ...)`로 CSV를 저장한다.\n"
-        "8. `cv2.imwrite(str(out_dir / 'overlay.png'), overlay_image)`로 오버레이를 저장한다.\n\n"
-
-        "## [매우 중요] 라이브러리 (필수 준수):\n"
-        "1. **(라이브러리 구분)** 너는 **두 개의 라이브러리**를 명확히 구분해야 한다:\n"
-        "   - **`import meta_utils`**: **오직** `umx, umy, classes, meta_path = meta_utils.__wrap_load_pixel_scale_um(...)` (4개 반환값) 호출에만 사용한다.\n"
-        "   - **`import measurement_utils`**: **모든 CV 알고리즘** (예: `fit_line_from_top_peaks`, `read_gray`, `mask_eq_value` 등)에 사용한다.\n\n"
+        f"## [매우 중요] 생성 규칙: 로직 (Logic) - (SDIFF 힌트 기반 생성)\n"
+        f"1. **(유일한 진실)** 너는 **'오직'** [New Logic Hint] (SDIFF) (`notes.raw_text_cleaned_answer`, `final_class_hint...`)만을 **'유일한 진실'**로 삼아 'AI 생성 영역' 2곳을 채워야 한다.\n"
+        f"2. **(헬퍼 함수 생성)** `measure_logic`에 필요한 **'모든'** 헬퍼 함수 (예: `fit_line_to_top_points`, `project_point_onto_line`, `find_max_y_point`)를 [AI 생성 영역 1]에 **'새로 생성(def)'**해야 한다.\n"
+        f"3. **(Import 금지)** `measurement_utils`라는 파일은 존재하지 않는다. **'절대'** `import measurement_utils`를 시도하거나 관련 함수를 호출하지 마라.\n"
+        f"4. **(클래스 매핑)** `main`에서 전달받은 `classes` 리스트(예: `[10, 30, 50]`)를 사용하여, SDIFF 힌트의 **'의미론적'** 설명(예: 'darkest')을 **'정확한'** 클래스 값으로 **'직접'** 매핑해야 한다.\n"
+        f"   - **'darkest'** (가장 어두운) == **`classes[0]`** (예: `10`)\n"
+        f"   - **'brightest'** (가장 밝은) == **`classes[-1]`** (예: `50`)\n"
+        f"   - [경고] 힌트가 'darkest'인데 `50`을 하드코딩하는 것은 **'심각한 오류'**이다. **`classes[0]`**을 사용하라.\n"
+        f"5. **(힌트 타입 분기)** `final_class_hint_start`가 `\"red_1\"` (문자열 ID)이면 (AI가 생성한) `project_point_onto_line`을, `10` (숫자)이면 (AI가 생성한) `max_point_in_class` 등을 호출하는 **분기 로직**을 정확히 구현하라.\n\n"
         
-        "## [매우 중요] 신규 함수 생성 규칙 (필수 준수):\n"
-        "1. **(알고리즘 발명)** 만약 SDIFF 힌트 구현에 필요한 함수가 `measurement_utils`나 `meta_utils`에 **명백히 없다면**, SDIFF 힌트를 기반으로 해당 헬퍼 함수를 **'이 스크립트 최상단에'** `def`로 **직접 '생성'**하라.\n"
-        "2. **(호출 규칙)** `measurement_utils`에 있는 함수는 `measurement_utils.func_name()`으로 호출하고, `meta_utils`에 있는 함수는 `meta_utils.func_name()`으로 호출하고, **당신이 이 스크립트 내부에 직접 생성한 함수**는 `func_name()`으로 **'로컬 호출'**하라.\n"
-        "3. **(유사 함수 확인)** 새 함수를 '발명'하기 전에, `measurement_utils`에 **유사한 기능의 함수가 있는지 반드시 확인**하라. (예: `read_grayscale_image` 대신 `measurement_utils.read_gray`를 사용하라).\n\n"
-
-        "## [매우 중요] 코드 품질 규칙 (필수 준수):\n"
-        "1. **(Clean Main)** 너의 **`main()` 함수**와 `if __name__ == '__main__':` 블록은 반드시 '깨끗하게' 유지되어야 한다. 이 영역에서는 `cv2.findContours`, `np.where`, `cv2.fitLine` 같은 **저수준 CV/Numpy 함수를 절대 직접 호출하지 마라.**\n"
-        "2. **(Helper 함수 호출)** `main()` 함수는 **오직 고수준 헬퍼 함수** (예: `measurement_utils.fit_line...` 또는 당신이 생성한 `def my_new_helper(...)`)만 호출해야 한다.\n"
-        "3. **(헬퍼 함수 내부)** 당신이 **새로 생성하는 헬퍼 함수** (예: `def my_new_helper(...)`) **내부**에서는 `cv2.findContours` 같은 저수준 CV 함수를 **사용해도 된다.**"
+        f"## [요약]\n"
+        f"- **[작업]** 아래 템플릿의 'AI 생성 영역' 2곳을 [New Logic Hint]에 맞게 '채워 넣어라'.\n"
+        f"- **[템플릿]** `main`, `argparse`, `import meta_utils`, `CSV_HEADERS`는 템플릿을 '그대로' 사용한다.\n"
+        f"- **[로직]** '모든' 헬퍼 함수와 `measure_logic`은 'SDIFF 힌트'를 보고 '새로 생성'한다.\n"
+        f"- **[금지]** `import measurement_utils`는 '절대' 사용하지 않는다.\n"
     )
     
     user_msg = (
-        "아래 '지시 프롬프트'(SDIFF 힌트)를 `import measurement_utils`와 `import meta_utils`를 '호출'하여 구현하세요.\n"
-        "- **[유일한 진실]** `notes.raw_text`의 '자연어 설명'(construction_method, geometric_relationship)을 '유일한 진실'로 삼으세요.\n"
-        "- **[함수 선택]** 이 '자연어 설명'과 가장 일치하는 함수(예: `fit_line_from_top_peaks`)를 `measurement_utils`에서 '선택'하여 호출하세요.\n"
-        "- **[흐름 준수]** 'main() 함수 구현 규칙' 섹션에 명시된 8단계 흐름을 반드시 따라야 합니다. (특히 `meta_utils` 호출 시 `args.meta_root` 전달)\n"
-        "- **[CSV 준수]** `measurements.csv`는 반드시 `['measure_item', 'group_id', ...]` 13개 표준 헤더를 사용해야 합니다.\n"
-        "- `measurement_utils`에 힌트와 일치하는 함수가 없으면, 해당 함수를 '이 스크립트 최상단에' `def`로 직접 생성하고 '로컬 호출'하세요.\n"
-        "- `main()` 함수 내부에서는 저수준 CV 함수(cv2.findContours 등)를 쓰지 마세요.\n"
-        "- `mask_merge_path` 인자는 절대 사용하지 마세요.\n"
-        "- 절대 마크다운 코드펜스 없이 순수 파이썬 코드만 출력하세요.\n\n"
+        f"아래 [New Logic Hint] (SDIFF)에 맞게 [Static Template Code]의 'AI 생성 영역' 2곳을 '채워서' **'완전한'** 스크립트를 생성하세요.\n"
+        f"- **[규칙]** `main`과 `argparse`는 템플릿을 '그대로' 사용하세요.\n"
+        f"- **[규칙]** `measure_logic`과 필요한 '모든 헬퍼 함수'를 SDIFF 힌트 기반으로 '새로 생성'하세요.\n"
+        f"- **[규칙]** `darkest`는 `classes[0]`, `brightest`는 `classes[-1]`입니다.\n" 
+        f"- **[규칙]** `measurement_utils`는 '절대' `import`하지 마세요.\n"
+        f"- `mask_merge_path` 인자는 절대 사용하지 마세요.\n"
+        f"- 절대 마크다운 코드펜스 없이 순수 파이썬 코드만 출력하세요.\n\n"
         
-        "=== 지시 프롬프트 (SDIFF HINTS + METADATA - The Single Source of Truth) ===\n"
+        f"=== [유일한 진실] New Logic Hint (SDIFF) ===\n"
         f"{guide_text_with_sdiff}\n\n"
-        "=== few-shot 텍스트 (참고용 구조) ===\n"
-        + "(제거됨. `argparse`와 표준 CSV 헤더, `main()` 함수 흐름 규칙을 직접 구현하세요.)"
+        f"=== [사용할 뼈대] Static Template Code ===\n"
+        f"```python\n{STATIC_TEMPLATE_CODE}\n```"
     )
 
     resp = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=user_msg)])
@@ -3203,7 +3320,7 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, fewshot_
         return code
 
     # 1회 재시도
-    retry_user = user_msg + "\\n\\n[중요] 지금 바로 '파이썬 코드 본문'만 출력하세요. 주석은 허용, 설명문 금지."
+    retry_user = user_msg + "\n\n[중요] 지금 바로 '파이썬 코드 본문'만 출력하세요. 주석은 허용, 설명문 금지."
     resp2 = llm.invoke([SystemMessage(content=sys_msg), HumanMessage(content=retry_user)])
     code2 = _extract_text_from_aimessage(resp2).strip()
     return _strip_code_fence(code2)
@@ -3214,15 +3331,14 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
     """
     [CRITICAL FIX 17]
     - SDIFF 힌트 정제 로직은 유지합니다.
-    - _sanitize_structured_diff_semantics가 'endpoints'만 제거하도록 호출합니다.
-    - [RESTORED & FIXED] Top-1 'main()' 구조를 '복원'하되,
-      AST를 사용해 'main()' 함수의 '내부 로직'을 제거(pass)하여 '오염'을 방지합니다.
-      (ValueError 및 NameError 동시 해결)
+    - _sanitize_structured_diff_semantics가 'endpoints'와 'detected_...' 힌트를 제거하도록 호출합니다.
+    - [CHANGED] Top-1 예제 코드 주입을 '완전히 제거'하고,
+      _safe_invoke... 함수에 '정적 템플릿'을 사용하도록 위임합니다.
     """
     try:
         import json, os
         from pathlib import Path
-        import ast 
+        import ast # (더 이상 사용되지 않음)
 
         image_name = payload.get("image_name")
         structured_diff_text = payload.get("structured_diff_text", "") # 원본 SDIFF (JSON 문자열)
@@ -3259,13 +3375,35 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
         # --- 2. SDIFF 힌트 정제 (Python 객체 직접 수정) ---
         sdiff_dict = {}
         qwen_json = {}
+        
+        # [NEW] 원본 raw_text (질문+답변) 보관
+        original_raw_text_for_logging = ""
+        
         try:
             sdiff_dict = _parse_qwen_json(structured_diff_text)
-            qwen_json = _parse_qwen_json(sdiff_dict.get("notes", {}).get("raw_text", ""))
             
+            # [CHANGED] 원본 raw_text (질문+답변)를 로깅용 변수에 저장
+            original_raw_text_for_logging = sdiff_dict.get("notes", {}).get("raw_text", "")
+            
+            # [CHANGED] Qwen의 '답변' JSON만 파싱하여 sdiff_dict의 raw_text를 '교체'
+            if original_raw_text_for_logging:
+                qwen_answer_json_obj = _parse_qwen_json(original_raw_text_for_logging) # json5가 'assistant' 이후 JSON을 파싱함
+                qwen_json = qwen_answer_json_obj # 파싱된 '답변' JSON
+                
+                # SDIFF 힌트에 '정제된' 답변(JSON 객체)을 다시 주입
+                if "notes" not in sdiff_dict: sdiff_dict["notes"] = {}
+                sdiff_dict["notes"]["raw_text_cleaned_answer"] = qwen_answer_json_obj
+                
+                # [!!! THE FIX !!!]
+                # GPT-OSS에 전달될 sdiff_dict에서 원본 'raw_text' (질문+답변)를 삭제합니다.
+                sdiff_dict.get("notes", {}).pop("raw_text", None)
+                
+            else:
+                 qwen_json = {}
+
             # 2c. [RED LINE] 힌트 정제
             red_class_map = {} 
-            qwen_red_lines = qwen_json.get("red_guides_refined", [])
+            qwen_red_lines = qwen_json.get("red_guides_refined", []) # [CHANGED] 정제된 qwen_json 사용
             red_cv_map = {line.get("id"): line for line in sdiff_dict.get("red", {}).get("lines", [])}
 
             for qwen_line in qwen_red_lines:
@@ -3277,7 +3415,8 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 
                 correct_class_val = None
                 if qwen_req_classes and brightness_map:
-                    first_desc = qwen_req_classes[0]
+                    # [FIX] VLM의 답변은 ['darkest'] 같은 리스트일 수 있음
+                    first_desc = qwen_req_classes[0] if isinstance(qwen_req_classes, list) and qwen_req_classes else qwen_req_classes
                     if first_desc in brightness_map:
                         correct_class_val = brightness_map[first_desc]
                 
@@ -3287,13 +3426,18 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                         original_hint = red_cv_map[line_id].get("detected_class_hint")
                         if original_hint != correct_class_val:
                             log.info(f"[GPT-OSS Prep] Resolving RED conflict ({line_id}). Overwriting hint {original_hint} -> {correct_class_val}")
-                            red_cv_map[line_id]["detected_class_hint"] = correct_class_val
+                            red_cv_map[line_id]["detected_class_hint"] = correct_class_val # (덮어쓰기: 어차피 삭제될 필드)
+                        
+                        # [!!! THE FIX !!!]
+                        # Red Line에도 'final_class_hint' 필드를 생성하여 힌트가 삭제되는 것을 방지합니다.
+                        red_cv_map[line_id]["final_class_hint"] = correct_class_val
+                        log.info(f"[GPT-OSS Prep] Final Hint (RED, {line_id}): {correct_class_val}")
             
             if "grouping_logic" in qwen_json:
                 sdiff_dict["grouping_logic_vlm"] = qwen_json["grouping_logic"]
 
-            # 2d. [GREEN LINE] "Final Hint" 생성
-            qwen_green_lines = qwen_json.get("green_measures_refined", [])
+            # 2d. [GREEN LINE] "Final Hint" 생성 (기존 로직 유지)
+            qwen_green_lines = qwen_json.get("green_measures_refined", []) # [CHANGED] 정제된 qwen_json 사용
             green_cv_map = {line.get("id"): line for line in sdiff_dict.get("green", {}).get("lines", [])}
 
             for qwen_line in qwen_green_lines:
@@ -3325,9 +3469,10 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
             log.error(f"[GPT-OSS Prep] SDIFF conflict resolution or parsing failed: {e}. Passing empty SDIFF to GPT-OSS.")
             sdiff_dict = {} 
         
-        # --- 3. [CHANGED] `endpoints` 제거 (파싱된 '객체' 입력) ---
+        # --- 3. [CHANGED] `endpoints` 및 `detected_...` 힌트 제거 ---
         structured_diff_semantic_text = "{}"
         if sdiff_dict: # 파싱/정제에 성공한 경우에만
+            # [CHANGED] _sanitize_structured_diff_semantics 호출 (위 1번 함수)
             structured_diff_semantic_text, geom_removed, geom_parsed = _sanitize_structured_diff_semantics(sdiff_dict)
         
             if not geom_parsed: # (만약 _sanitize_...가 실패한 경우)
@@ -3335,76 +3480,28 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 structured_diff_semantic_text = "{}"
         
 
-        # --- 4. [RESTORED & FIXED] Top-1 'main() 구조' 파싱 (내부 로직 제거) ---
-        sels = []
+        # --- 4. [CHANGED] Top-1 '뼈대 코드' 로드 로직 '완전 삭제' ---
+        # fewshot_texts 리스트는 비어 있게 됩니다.
         fewshot_texts = [] 
-        try:
-            sels = _select_topk_fewshots_for(image_name, k=1)
-            
-            if sels:
-                preamble = (
-                    "아래는 현재 요청과 가장 유사한 코드의 'main() 함수 구조'입니다.\n"
-                    "파일 입출력, argparse, `main()` 호출 구조를 참고하세요.\n"
-                    "[경고] 이 예제의 '내부 로직'은 오래되었거나 틀릴 수 있습니다.\n"
-                    "로직은 오직 SDIFF 힌트와 `measurement_utils` 라이브러리만으로 재구성해야 합니다.\n"
-                )
-                
-                top1_code_path = Path(sels[0]["_dir"]) / "code.py"
-                main_structure = ""
-                
-                if top1_code_path.exists():
-                    top1_code_str = top1_code_path.read_text(encoding="utf-8", errors="ignore")
-                    try:
-                        parsed_code = ast.parse(top1_code_str)
-                        
-                        # [FIX] main 함수의 '본체(body)'를 'pass'로 교체하여 로직 오염 방지
-                        main_func_found = False
-                        for node in parsed_code.body:
-                            if isinstance(node, ast.FunctionDef) and node.name == 'main':
-                                node.body = [ast.Pass()] # 내부 로직을 'pass'로 대체
-                                main_structure += ast.unparse(node) + "\n\n"
-                                main_func_found = True
-                                break
-                        
-                        if not main_func_found: # main() 함수가 없으면 argparse라도 찾기
-                             main_structure += "\n".join([line for line in top1_code_str.splitlines() if "argparse.ArgumentParser" in line or "ap.add_argument" in line])
-
-                        # __name__ == "__main__" 블록은 그대로 유지
-                        main_block = next((n for n in parsed_code.body if (
-                            isinstance(n, ast.If) and 
-                            isinstance(n.test, ast.Compare) and
-                            isinstance(n.test.left, ast.Name) and n.test.left.id == '__name__'
-                        )), None)
-                        
-                        if main_block:
-                            main_structure += ast.unparse(main_block) + "\n"
-
-                    except Exception as e_ast:
-                        log.warning(f"[gptoss_generate_sdiff] ast parsing failed: {e_ast}")
-                        main_structure = "(Top-1 main() 파싱 실패)"
-
-                if main_structure:
-                    fewshot_texts = [f"{preamble}\n\n```python\n{main_structure}\n```"]
-                else:
-                    fewshot_texts = ["(Top-1 main() 구조를 찾지 못함)"]
-
-        except Exception as e:
-            log.warning(f"[gptoss_generate_sdiff] fewshot(k=1) main parse failed: {e}")
+        # (기존 Top-1 예제 로드 try-except 블록 전체 삭제)
+        
+        # --- [CHANGED] 끝 ---
 
         # --- 5. SDIFF + MASK METADATA 결합 ---
         full_prompt_list = []
         full_prompt_list.append("Generate a Python script based on the [STRUCTURED_DIFF] hint below.")
-        full_prompt_list.append("Your code MUST import and use functions from `measurement_utils` and `meta_utils`.")
+        # [CHANGED] "measurement_utils" import 지시 삭제
+        full_prompt_list.append("Your code MUST import and use functions from `meta_utils`.")
         full_prompt_list.append("\n## [STRUCTURED_DIFF SEMANTIC HINTS (Refined)]\n")
         
-        note_line = "(All geometric coordinates (endpoints) have been removed. Recalculate geometry from the mask.)\n"
+        note_line = "(All geometric coordinates (endpoints) and old 'detected_' hints have been removed. Recalculate geometry using 'final_' hints and logic.)\n"
         full_prompt_list.append(note_line)
-        full_prompt_list.append(structured_diff_semantic_text)  # 'endpoints'가 제거된 SDIFF 텍스트
+        full_prompt_list.append(structured_diff_semantic_text)  # 'endpoints', 'detected_'가 제거된 SDIFF 텍스트
 
         if meta_sum:
             try:
                 meta_json_str = json.dumps(meta_sum, ensure_ascii=False, indent=2)
-                full_prompt_list.append("\n\n### MASK METADATA (Data/Hints for Algorithm)\n")
+                full_prompt_list.append("\n\n### MASK METADATAv(Data/Hints for Algorithm)\n")
                 full_prompt_list.append(meta_json_str)
             except Exception as e:
                 log.warning(f"Failed to serialize Meta Summary for prompt: {e}")
@@ -3419,16 +3516,19 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 debug_content.append(f"[gptoss_generate_from_sdiff log @ {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
                 debug_content.append("--- 1. SDIFF Hint + MASK METADATA (Combined & Corrected & Sanitized) ---\n") 
                 debug_content.append(full_prompt)
-                debug_content.append("\n\n--- 2. Few-Shot 'main()' Structure (RESTORED - Body Sanitized) ---\n")
-                if fewshot_texts:
-                    debug_content.append(fewshot_texts[0])
-                else:
-                    debug_content.append("(No few-shot structure injected)")
+                debug_content.append("\n\n--- 2. Few-Shot 'Skeleton Code' (CHANGED - Removed, Using Static Template) ---\n")
+                debug_content.append("(No dynamic few-shot injected. Using static template in sys_msg.)")
                 debug_path.write_text("\n".join(debug_content), encoding="utf-8")
+                
+                # [NEW] 원본 Qwen raw_text (질문+답변)를 별도 파일에 로깅
+                debug_path_raw_qwen = (RUN_DIR / stem / "gptoss_gen_sdiff.raw_qwen.txt")
+                debug_path_raw_qwen.write_text(original_raw_text_for_logging or "(raw_text not found)", encoding="utf-8")
+                
             except Exception as e:
                 log.warning(f"[gptoss_generate_sdiff] debug log failed: {e}")
 
-        # --- 7. 전용 Invoker 호출 ---
+        # --- 7. 전용 Invoker 호출 (위 1번 함수) ---
+        # [CHANGED] fewshot_texts는 빈 리스트가 전달됨
         code = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt, fewshot_texts).strip()
         code = _strip_code_fence(code)
 
@@ -3956,4 +4056,3 @@ if __name__ == "__main__":
     log.info(f"GPTOSS_BASE_URL set? {bool(GPTOSS_BASE_URL)} MODEL={GPTOSS_MODEL}")
     log.info(f"QWEN_ENABLE={QWEN_ENABLE} MODEL_ID={QWEN_MODEL_ID} DEVICE={QWEN_DEVICE} DTYPE={QWEN_DTYPE}")
     uvicorn.run(app, host="0.0.0.0", port=port)
-
