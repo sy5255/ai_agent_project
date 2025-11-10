@@ -2378,8 +2378,8 @@ def _parse_qwen_json(raw_text: str) -> Dict:
         log.warning(f"[Qwen] Failed to parse raw_text JSON: {e}")
         log.debug(f"[Qwen] Failing raw_text: {raw_text}")
         return {}
-
-def _apply_qwen_refinement_to_sdiff_v1(sdiff_v1: Dict, brightness_map: Dict[str, int]) -> Dict:
+    
+ def _apply_qwen_refinement_to_sdiff_v1(sdiff_v1: Dict, brightness_map: Dict[str, int]) -> Dict:
     """
     [CHANGED] Qwen의 추론 결과('notes.raw_text')를 파싱하고, 'brightness_map'을 사용해
     SDIFF v1 객체('red_lines_detail' 등)의 CV 힌트를 덮어씁니다.
@@ -2521,6 +2521,26 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
     [USER REQUESTED CHANGE]
     - DINO ROI 시각화를 위해 `dino_debug.png` 파일 생성 로직 추가.
     - [NEW] DINO ROI가 너무 큰 문제를 해결하기 위해 'ROI Slicing' 로직(4.7) 추가.
+    
+    [FIX FOR DINO DEBUG IMAGE]
+    - [FIXED] 4.7 (ROI Slicing) 로직을 4.6 (Debug Image) 블록 밖으로
+      이동시켜, 이미지 로드 실패 시에도 슬라이싱이 누락되지 않도록 수정.
+      
+    [FIX FOR DINO DEBUG IMAGE (v4)]
+    - [FIXED] 4.6 (Debug Image) 블록이 오직 '최종 슬라이싱된'
+      좌표(dino_debug_rois_final)만 그리도록 수정.
+    - [CRITICAL BUG FIX] cv2.rectangle의 두 번째 Y좌표를 'fh'가 아닌 'fy+fh'로 수정.
+    - [COLOR CHANGE] 박스 색상을 Green -> Yellow (0, 255, 255)로 변경.
+    
+    [PLAN J FIX] Build the V6 SDIFF Structure
+    - [FIXED] 이 함수가 사용자님이 요청하신 'V6' SDIFF 객체를 생성하도록
+              '5. V6 SDIFF 빌드' 섹션을 재구성.
+    - [FIXED] (데이터) Root `red`/`green` 키에 '번역된' 논리(pair_X, final_hints)를 저장.
+    - [FIXED] (논리) `notes.raw_text` (Qwen 원본)를 파싱, 'group_id'만 제거하여
+              `notes.raw_text_cleaned_answer`에 저장.
+    - [REMOVED] `notes.raw_text` (원본)은 최종 SDIFF에서 제거.
+    - [FIXED] VLM이 수정한 `orientation` ("horizontal")이
+              Root `red.lines`에 반영되도록 수정.
     """
     try:
         name = (data or {}).get("image_name")
@@ -2650,184 +2670,193 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
             log.error(f"Failed to run Grounding DINO: {ge}")
         # --- [NEW] END ---
         
-        # --- [NEW] 4.6 (DINO Debug Image) 시각화 로직 추가 ---
+        # --- [NEW] 4.7 (ROI Slicing) ---
+        # [FIXED] 이 로직을 4.6 (Debug Image) 블록 밖으로 이동시킴
         dino_debug_rois_final = {} # { "red_1": [...] } (Slicing 후 최종본)
         try:
             if grounded_rois_map:
+                for red_id, rois in grounded_rois_map.items():
+                    location_hint = location_hint_map.get(red_id, "full_image")
+                    final_rois_for_id = []
+                    
+                    for i, (x, y, w, h) in enumerate(rois):
+                        orig_roi = [x, y, w, h]
+                        final_roi = orig_roi # 기본값
+                        
+                        # VLM 힌트 기반 Slicing
+                        # (예: [4, 300, 2038, 1738] -> [4, 300, 2038, 724])
+                        if location_hint == "top":
+                            y_cutoff = int(img_h * 0.5) # 이미지 높이의 50%
+                            ymax_new = min(y + h, y_cutoff) # ROI의 ymax가 50% 컷오프를 넘지 못하게
+                            if ymax_new > y:
+                                final_roi = [x, y, w, ymax_new - y] # [x, y, w, new_h]
+                            
+                        elif location_hint == "bottom":
+                            y_cutoff = int(img_h * 0.5)
+                            ymin_new = max(y, y_cutoff) # ROI의 ymin이 50% 컷오프보다 작지 않게
+                            if ymin_new < (y + h):
+                                final_roi = [x, ymin_new, w, (y + h) - ymin_new] # [x, new_y, w, new_h]
+                        
+                        # (기타 'left', 'right' 로직 추가 가능)
+                        
+                        final_rois_for_id.append(final_roi)
+                    
+                    dino_debug_rois_final[red_id] = final_rois_for_id # Sliced ROIs 저장
+        except Exception as slice_e:
+            log.error(f"Failed to run ROI Slicing (4.7): {slice_e}")
+            # 실패 시, Sliced 맵을 원본 맵으로 채워서 Fallback
+            dino_debug_rois_final = grounded_rois_map
+
+        # --- [NEW] 4.6 (DINO Debug Image) 시각화 로직 ---
+        # [FIXED] 최종 슬라이싱된(dino_debug_rois_final) 좌표만 노란색으로 그리도록 수정
+        try:
+            # [FIX] dino_debug_rois_final (최종본) 기준으로 실행
+            if dino_debug_rois_final: 
                 debug_img = cv2.imread(str(merge_path), cv2.IMREAD_COLOR)
                 if debug_img is not None:
                     
-                    # --- [NEW] 4.7 (ROI Slicing) ---
-                    # DINO ROI가 너무 큰 문제를 VLM의 "top" 힌트로 강제 Slicing
-                    
-                    for red_id, rois in grounded_rois_map.items():
-                        location_hint = location_hint_map.get(red_id, "full_image")
-                        final_rois_for_id = []
+                    # [FIX] dino_debug_rois_final (최종본 맵)을 기준으로 루프
+                    for red_id, final_rois_for_id in dino_debug_rois_final.items():
                         
-                        for i, (x, y, w, h) in enumerate(rois):
-                            orig_roi = [x, y, w, h]
-                            final_roi = orig_roi # 기본값
-                            
-                            # (Blue color for DINO Original ROIs)
-                            cv2.rectangle(debug_img, (x, y), (x+w, y+h), (255, 100, 0), 2)
-                            cv2.putText(debug_img, f"{red_id}_roi_{i}", (x, y-5), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 100, 0), 2)
-                            
-                            # VLM 힌트 기반 Slicing
-                            # (예: [4, 300, 2038, 1738] -> [4, 300, 2038, 724])
-                            if location_hint == "top":
-                                y_cutoff = int(img_h * 0.5) # 이미지 높이의 50%
-                                ymax_new = min(y + h, y_cutoff) # ROI의 ymax가 50% 컷오프를 넘지 못하게
-                                if ymax_new > y:
-                                    final_roi = [x, y, w, ymax_new - y] # [x, y, w, new_h]
-                                
-                            elif location_hint == "bottom":
-                                y_cutoff = int(img_h * 0.5)
-                                ymin_new = max(y, y_cutoff) # ROI의 ymin이 50% 컷오프보다 작지 않게
-                                if ymin_new < (y + h):
-                                    final_roi = [x, ymin_new, w, (y + h) - ymin_new] # [x, new_y, w, new_h]
-                            
-                            # (기타 'left', 'right' 로직 추가 가능)
-                            
-                            final_rois_for_id.append(final_roi)
-                            
-                            if final_roi != orig_roi:
-                                # (Green color for Sliced ROIs)
-                                (fx, fy, fw, fh) = final_roi
-                                cv2.rectangle(debug_img, (fx, fy), (fx+fw, fy+fh), (0, 255, 0), 2)
-                                cv2.putText(debug_img, f"FINAL", (fx, fy+15), 
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        # [REMOVED] 원본(Blue) ROI 그리기 루프 삭제
                         
-                        dino_debug_rois_final[red_id] = final_rois_for_id # Sliced ROIs 저장
+                        # [FIXED] Sliced ROI 그리기 (Yellow)
+                        for i, (fx, fy, fw, fh) in enumerate(final_rois_for_id): 
+                            
+                            # --- [CRITICAL BUG FIX (v3)] ---
+                            # (fx+fw, fh) -> (fx+fw, fy+fh)
+                            # -------------------------------
+                            p1 = (int(fx), int(fy))
+                            p2 = (int(fx + fw), int(fy + fh)) # <-- 'fy'가 추가됨
+                            
+                            # --- [COLOR CHANGE] Green -> Yellow ---
+                            color_yellow = (0, 255, 255)
+                            cv2.rectangle(debug_img, p1, p2, color_yellow, 3) # (노란색, 두께 3)
+                            cv2.putText(debug_img, f"{red_id}_final_{i}", (int(fx), int(fy)-5), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_yellow, 2)
                     
                     debug_dir = (RUN_DIR / stem)
                     debug_dir.mkdir(parents=True, exist_ok=True)
                     debug_save_path = debug_dir / "dino_debug.png"
                     cv2.imwrite(str(debug_save_path), debug_img)
-                    log.info(f"Saved DINO debug image to: {debug_save_path}")
+                    log.info(f"Saved DINO debug image (FINAL ROIs ONLY) to: {debug_save_path}")
                 else:
                     log.warning(f"Could not read mask_merge_path for DINO debug: {merge_path}")
         except Exception as de:
-            log.error(f"Failed to generate DINO debug image: {de}")
+            log.exception(f"Failed to generate DINO debug image: {de}") # [CHANGED] log.exception
         # --- [NEW] END ---
 
-        # 5. [BUG FIX] v2_lite 객체를 '수동으로' 빌드 (To Preserve Green Lines)
+
+        # --- [NEW] 5. "V6" SDIFF 빌드 (데이터 + 논리) ---
         
-        # 5.1 v2_lite 뼈대 생성
+        # 5.1 Qwen의 '논리' (JSON 딕셔너리) 파싱
+        qwen_json_dict = _parse_qwen_json(sdiff_v1_refined.get("notes", {}).get("raw_text", ""))
+        if not qwen_json_dict:
+            log.error("Failed to parse Qwen's raw_text, cannot build V6 SDIFF.")
+            qwen_json_dict = {} # Fallback
+
+        # 5.2 '논리'에서 'group_id' (모순 데이터) 외과적 제거
+        qwen_green_refined_list = qwen_json_dict.get("green_measures_refined", [])
+        if isinstance(qwen_green_refined_list, list):
+            for green_item in qwen_green_refined_list:
+                if isinstance(green_item, dict) and green_item.get("vlm_refinement"):
+                    green_item["vlm_refinement"].pop("group_id", None) # <-- Surgical removal
+        
+        # 5.3 V6 SDIFF 뼈대 생성
         sdiff_final = {
-            "schema": "scribble_v2_lite",
+            "schema": "scribble_vlite_v2", # (사용자님 `v6` 예시)
+            "rules": sdiff_v1_refined.get("rules", {"green_on_red": True, "nudge_if_touching": True}),
             "red":   {"count": 0, "lines": []},
             "green": {"count": 0, "lines": []},
-            "rules": sdiff_v1_refined.get("rules", {"green_on_red": True, "nudge_if_touching": True}),
-            "notes": dict(sdiff_v1_refined.get("notes", {})) # raw_text 포함하여 복사
+            
+            # (E) VLM의 "논리" 복사본 (v6 예시)
+            "grouping_logic_vlm": qwen_json_dict.get("grouping_logic", {}), 
+            
+            "notes": {
+                "source": "hybrid_cv_geometry_qwen_notes",
+                "mask_name": mask_path.name if mask_path else None,
+                "merge_name": merge_path.name,
+                "scribble_name": scribble_path.name,
+                
+                # (A) VLM의 "구구절절한 설명" (v6 예시)
+                "raw_text_cleaned_answer": qwen_json_dict 
+                # [REMOVED] 원본 notes.raw_text는 저장 안 함
+            }
         }
         
-        # 5.2 Qwen의 raw_text 파싱 (VLM 논리/데이터 추출)
-        qwen_json = _parse_qwen_json(sdiff_v1_refined.get("notes", {}).get("raw_text", ""))
-        
-        # 5.3 VLM '논리' 맵 생성
-        
-        # (A) Red 힌트 맵 (final_class_hint)
+        # 5.4 '데이터' 힌트맵 생성 (16번 답변의 5.3 로직 재사용)
         red_final_hint_map = {}
-        qwen_red_refined = qwen_json.get("red_guides_refined", [])
+        qwen_red_refined = qwen_json_dict.get("red_guides_refined", [])
         if qwen_red_refined:
             for red_guide_vlm in qwen_red_refined:
                 line_id = red_guide_vlm.get("id")
                 if not line_id: continue
-                
                 vlm_ref = red_guide_vlm.get("vlm_refinement", {})
-                req_classes_desc = vlm_ref.get("required_classes", []) # ["darkest"]
+                req_classes_desc = vlm_ref.get("required_classes", [])
                 if req_classes_desc and brightness_map:
                     first_desc = req_classes_desc[0]
                     if first_desc in brightness_map:
-                        red_final_hint_map[line_id] = brightness_map[first_desc] # "darkest" -> 10
+                        red_final_hint_map[line_id] = brightness_map[first_desc]
         
-        # (B) Green 힌트 맵 (final_class_hint_start/end, group_id_vlm)
         green_final_start_map = {}
         green_final_end_map = {}
-        group_id_map = {}
-        
-        qwen_green_refined = qwen_json.get("green_measures_refined", [])
-        raw_green_lines = sdiff_v1_merged.get("green_lines_detail", []) # CV 원본 (6개)
-        
-        # 1. (논리) "3 pairs" 문자열 힌트
-        grouping_logic_desc = (qwen_json.get("grouping_logic", {}) or {}).get("description", "").lower()
-        is_paired_logic = "pair" in grouping_logic_desc or "couple" in grouping_logic_desc
-
-        # 2. VLM의 '논리'가 '데이터'를 이기도록 'group_id' 맵 생성
-        if is_paired_logic and len(raw_green_lines) % 2 == 0 and len(raw_green_lines) > 0:
-            log.info(f"Applying VLM 'pairing' logic ({grouping_logic_desc}) to {len(raw_green_lines)} lines.")
-            pair_index = 1
-            # [FIX] CV로 추출한 line list는 x좌표 순서가 아니므로, x좌표 기준으로 정렬
-            sorted_green_lines = sorted(raw_green_lines, key=lambda l: min(l.get("x1", 0), l.get("x2", 0)))
-            
-            for i, ln in enumerate(sorted_green_lines):
-                line_id = ln.get("id")
-                if not line_id: continue
-                
-                group_id_map[line_id] = f"pair_{pair_index}"
-                
-                # 2개마다 pair_index 증가
-                if (i + 1) % 2 == 0:
-                    pair_index += 1
-        elif qwen_green_refined: # 'pair' 논리가 없으면 VLM의 '데이터' 힌트(independent_X)를 사용
-            log.info("Applying VLM 'individual' logic (fallback).")
-            if len(qwen_green_refined) == len(raw_green_lines): # (길이 일치할 때만)
-                for i, ln_refined in enumerate(qwen_green_refined):
-                    line_id = ln_refined.get("id")
-                    group_id = ln_refined.get("vlm_refinement", {}).get("group_id") # (예: "independent_1")
-                    if line_id and group_id:
-                        group_id_map[line_id] = group_id
-                    
-        # 3. VLM의 'final_..._hint' 맵 생성
+        raw_green_lines = sdiff_v1_merged.get("green_lines_detail", [])
+        qwen_green_refined = qwen_json_dict.get("green_measures_refined", [])
         if qwen_green_refined:
             green_cv_map = {ln.get("id"): ln for ln in raw_green_lines}
             for ln_refined in qwen_green_refined:
                 line_id = ln_refined.get("id")
-                if not line_id or line_id not in green_cv_map:
-                    continue
-                
+                if not line_id or line_id not in green_cv_map: continue
                 vlm_ref = ln_refined.get("vlm_refinement", {})
-                cv_line = green_cv_map[line_id]
-                original_start = cv_line.get("detected_class_hint_start")
-                original_end = cv_line.get("detected_class_hint_end")
-                
+                original_start = green_cv_map[line_id].get("detected_class_hint_start")
+                original_end = green_cv_map[line_id].get("detected_class_hint_end")
                 vlm_start_connects = vlm_ref.get("start_is_connected_to_red_guide")
                 vlm_start_connect_id = vlm_ref.get("connected_red_guide_id_start")
-                
-                # Start 힌트 정제
                 if vlm_start_connects is True and vlm_start_connect_id:
-                    green_final_start_map[line_id] = vlm_start_connect_id # "red_1"
+                    green_final_start_map[line_id] = vlm_start_connect_id
                 else:
-                    green_final_start_map[line_id] = original_start # CV 힌트
-                
-                # End 힌트 정제 (CV 힌트가 가장 정확)
+                    green_final_start_map[line_id] = original_start
                 green_final_end_map[line_id] = original_end
 
-        
-        # 4.4 SDIFF v2_lite 객체 '빌드'
-        
-        # (A) Red Lines 빌드
-        for ln in sdiff_v1_merged.get("red_lines_detail", []):
+        # 5.5 'group_id_vlm' 번역 (16번 답변의 로직 재사용)
+        group_id_map = {}
+        grouping_logic_desc = (qwen_json_dict.get("grouping_logic", {}) or {}).get("description", "").lower()
+        is_paired_logic = "pair" in grouping_logic_desc or "couple" in grouping_logic_desc
+
+        if is_paired_logic and len(raw_green_lines) % 2 == 0 and len(raw_green_lines) > 0:
+            log.info(f"Applying VLM 'pairing' logic ({grouping_logic_desc}) to {len(raw_green_lines)} lines.")
+            pair_index = 1
+            sorted_green_lines = sorted(raw_green_lines, key=lambda l: min(l.get("x1", 0), l.get("x2", 0)))
+            for i, ln in enumerate(sorted_green_lines):
+                line_id = ln.get("id")
+                if not line_id: continue
+                group_id_map[line_id] = f"pair_{pair_index}"
+                if (i + 1) % 2 == 0: pair_index += 1
+        else:
+            log.warning(f"Pairing logic failed or not specified ({grouping_logic_desc}). Using CV paired_id as fallback.")
+            for ln in raw_green_lines:
+                group_id_map[ln.get("id")] = ln.get("paired_red_id", "default_group")
+
+        # 5.6 '데이터' (Red Lines) 빌드
+        qwen_red_map = {item.get("id"): item for item in qwen_json_dict.get("red_guides_refined", [])}
+        for ln in sdiff_v1_merged.get("red_lines_detail", []): # Use CV data
             if not isinstance(ln, dict): continue
             line_id = ln.get("id")
-            
-            # [FIX] Slicing된 DINO ROI를 사용
-            final_rois = dino_debug_rois_final.get(line_id, grounded_rois_map.get(line_id)) # 4.7의 결과
+            qwen_item = qwen_red_map.get(line_id, {})
+            qwen_vlm_fact = qwen_item.get("cv_hint_geometric_fact", {})
             
             sdiff_final["red"]["lines"].append({
                 "id": line_id,
                 "role": "guide",
-                "orientation": ln.get("orientation"),
+                # [FIX] VLM이 수정한 `orientation` ("horizontal")을 사용, 없으면 CV("diagonal") 사용
+                "orientation": qwen_vlm_fact.get("orientation", ln.get("orientation")), 
                 "angle_deg": ln.get("angle_deg"),
                 "length_px": ln.get("length_px"),
-                "endpoints": [ln.get("x1"), ln.get("y1"), ln.get("x2"), ln.get("y2")],
-                "detected_class_hint": ln.get("detected_class_hint"), # (CV 원본)
-                "final_class_hint": red_final_hint_map.get(line_id), # (VLM 정제본)
-                "grounded_rois": final_rois # (DINO 힌트)
+                "final_class_hint": red_final_hint_map.get(line_id),
+                "grounded_rois": dino_debug_rois_final.get(line_id) # Sliced ROIs
             })
 
-        # (B) Green Lines 빌드 (6개)
+        # 5.7 '데이터' (Green Lines) 빌드
         for ln in raw_green_lines: # (CV 원본 6개)
             if not isinstance(ln, dict): continue
             line_id = ln.get("id")
@@ -2835,24 +2864,18 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
             sdiff_final["green"]["lines"].append({
                 "id": line_id,
                 "role": "measure",
-                "group_id_vlm": group_id_map.get(line_id, ln.get("paired_red_id")), # (번역된 힌트)
+                "group_id_vlm": group_id_map.get(line_id), # <-- "pair_1"
                 "orientation": ln.get("orientation"),
-                "angle_deg": ln.get("angle_deg"),
-                "length_px": ln.get("length_px"),
                 "semantic": ln.get("semantic"), 
-                "paired_red_id": ln.get("paired_red_id"),
-                "endpoints": [ln.get("x1"), ln.get("y1"), ln.get("x2"), ln.get("y2")],
-                "detected_class_hint_start": ln.get("detected_class_hint_start"), # (CV 원본)
-                "detected_class_hint_end": ln.get("detected_class_hint_end"),
-                "final_class_hint_start": green_final_start_map.get(line_id), # (VLM 정제본)
-                "final_class_hint_end": green_final_end_map.get(line_id)
+                "final_class_hint_start": green_final_start_map.get(line_id), # "red_1"
+                "final_class_hint_end": green_final_end_map.get(line_id) # 10
             })
 
-        # 4.5 최종 카운트
+        # 5.8 최종 카운트
         sdiff_final["red"]["count"] = len(sdiff_final["red"]["lines"])
-        sdiff_final["green"]["count"] = len(sdiff_final["green"]["lines"]) # (이제 6이 되어야 함)
+        sdiff_final["green"]["count"] = len(sdiff_final["green"]["lines"])
 
-        log.info(f"Manually built SDIFF v2_lite: {sdiff_final['red']['count']} red, {sdiff_final['green']['count']} green.")
+        log.info(f"Successfully built V6 SDIFF: {sdiff_final['red']['count']} red, {sdiff_final['green']['count']} green.")
         
         STRUCTURED_DIFF_CACHE[name] = sdiff_final
         return JSONResponse({"ok": True, "structured_diff": sdiff_final})
@@ -3222,7 +3245,7 @@ async def code_get(image_name: str = Query(...)):
         return JSONResponse({"ok": False, "error": "no code found"})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)})
-    
+
 # -----------------------------
 # VL 설명 엔드포인트(위에서 정의) 이후 — 코드 실행/저장/되돌리기
 # -----------------------------
@@ -3576,7 +3599,7 @@ def _sanitize_structured_diff_semantics(structured_diff: dict) -> Tuple[str, boo
     return sanitized, removed, True
 
 # [NEW] SDIFF -> GPT-OSS 전용 Invoker
-def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, top_1_code_str: str) -> str:
+def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, top_1_code_str: str, stem: str) -> str:
     """
     [CRITICAL FIX 17]
     - [CHANGED] AI가 Top-1 예제에 오염되는 것을 막기 위해,
@@ -3593,8 +3616,21 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, top_1_co
     [BUG FIX] "Empty Code" 에러 해결:
               AI가 Top-1 '구조' (예: `zip`)와 SDIFF '논리' (예: "3 pairs")
               간의 '모순'으로 혼란에 빠지지 않도록 프롬프트(CV #4) 수정.
+              
+    [PLAN D FIX] "Empty Code" (Input Length) 문제 해결:
+    - [FIXED] 사용자 아이디어(Sliding Window)를 "Two-Message Strategy"로 구현.
+    - [NEW] Top-1 코드(예제)와 SDIFF(실제 임무)를 별개의 User 메시지로 분리하여
+            길이 한계를 우회하고 프롬프트 충돌을 제거합니다.
+            
+    [DEBUG LOGGING]
+    - [NEW] 'stem' 인자를 받아, Two-Message 배열의 내용을 
+            `gptoss_gen_sdiff.debug.txt`에 추가로 로깅합니다.
+            
+    [PLAN F FIX] Prompt Merging
+    - [FIXED] 사용자님의 '최신 프롬프트' 규칙(CV 1-8, 출력 1-6 등)을 
+              "Two-Message" 전략의 `sys_msg`에 '완벽하게 통합'하여 누락된 지시가 없도록 보강.
     """
-    from langchain_core.messages import SystemMessage, HumanMessage
+    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
     llm = _build_gptoss()
 
     # [CRITICAL] 13개 표준 헤더 (AI에게 명시적으로 주입)
@@ -3605,10 +3641,14 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, top_1_co
         "'image_name', 'run_id', 'note']"
     )
 
-    # [CRITICAL] 새 시스템 프롬프트 (템플릿 + 생성 지시)
+    # [NEW] 'sys_msg' (Two-Message 전략용, 사용자님의 모든 규칙 포함)
     sys_msg = (
         "너는 파이썬 스크립트 생성 전문가다.\n"
-        "너의 임무는 [New Logic Hint (SDIFF)]를 기반으로, [Reference Code (Top-1 Few-Shot)]의 **'구조'**를 참고하여 **'완전한 새 스크립트'**를 생성하는 것이다.\n\n"
+        "너의 임무는 [New Logic Hint (SDIFF)]를 기반으로, [Reference Code (Top-1 Few-Shot)]의 **'구조'**를 참고하여 **'완전한 새 스크립트'**를 생성하는 것이다.\n"
+        "대화는 두 단계로 진행된다:\n"
+        "1. (첫 번째 User 메시지): 너는 '구조 참고용' [Reference Code]를 받는다.\n"
+        "2. (두 번째 User 메시지): 너는 '새로운' [New Logic Hint (SDIFF)]를 받는다.\n"
+        "너의 유일한 출력은 SDIFF 힌트(2)를 예제 코드(1)의 구조에 맞춰 구현한 **'완전한' 파이썬 코드**여야 한다.\n\n"
         
         "## [매우 중요] 상수 값 및 구조 규칙 (필수 준수):\n\n"
         
@@ -3627,7 +3667,7 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, top_1_co
         "    c. 각 루프에서, 원본 마스크를 `roi` 좌표로 잘라낸 `finger_roi_mask`를 생성해야 한다.\n"
         "    d. 이 `finger_roi_mask`에 대해 [Reference Code]의 `min_point_in_class` (또는 `max_point_in_class`) 헬퍼 함수를 호출하여 각 컴포넌트의 픽셀 좌표를 찾아야 한다.\n"
         
-        "4. **(그룹핑 논리) [FIXED]** SDIFF의 `notes.grouping_logic.description`에 'pair' 힌트가 있는지, 그리고 `green.lines`의 `group_id_vlm` 키(예: 'pair_1')를 확인하라.\n"
+        "4. **(그룹핑 논리)** SDIFF의 `notes.grouping_logic.description`에 'pair' 힌트가 있는지, 그리고 `green.lines`의 `group_id_vlm` 키(예: 'pair_1')를 확인하라.\n"
         "   a. 이 경우, 너는 [Reference Code]의 '반복' 구조(예: `zip`)가 SDIFF의 '논리'('3 pairs')와 **'모순'**된다는 것을 인지해야 한다.\n"
         "   b. 너는 **'반드시'** `Top-1` 코드의 `zip` 구조를 **'무시'**하고, SDIFF의 '논리'를 따르는 **'새로운 반복문'** (예: `itertools.groupby` 또는 x좌표 정렬 후 2개씩 묶기)을 **'새로 구현'**해야 한다.\n"
         
@@ -3637,55 +3677,100 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, top_1_co
         "    c. 만약 개수가 적다면(즉, `1 < 4`), `cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)` (열림 연산)을 적용하여 '얇은 브릿지'를 제거한 '새 마스크'를 생성하라.\n"
         "    d. 이 '열림 연산 마스크'에 대해 `cv2.connectedComponents`를 2차 호출하여 SDIFF가 요구한 'N개'의 컴포넌트를 확보하라.\n"
 
-        "6. **(헬퍼 함수 생성/수정) [RESTORED]** `measure_logic`에 필요한 **'모든'** 헬퍼 함수 (예: `fit_red_line`, `project_point_onto_line`, `find_max_y_point`)를 [Reference Code]의 구조를 참고하여 **'새로 생성(def)하거나 수정'**해야 한다.\n"
-        "7. **(클래스 매핑) [RESTORED]** `main`에서 전달받은 `classes` 리스트(예: `[10, 30, 50]`)를 사용하여, SDIFF 힌트의 **'의미론적'** 설명(예: 'darkest')을 **'정확한'** 클래스 값으로 **'직접'** 매핑해야 한다.\n"
+        "6. **(헬퍼 함수 생성/수정)** `measure_logic`에 필요한 **'모든'** 헬퍼 함수 (예: `fit_red_line`, `project_point_onto_line`, `find_max_y_point`)를 [Reference Code]의 구조를 참고하여 **'새로 생성(def)하거나 수정'**해야 한다.\n"
+        "7. **(클래스 매핑)** `main`에서 전달받은 `classes` 리스트(예: `[10, 30, 50]`)를 사용하여, SDIFF 힌트의 **'의미론적'** 설명(예: 'darkest')을 **'정확한'** 클래스 값으로 **'직접'** 매핑해야 한다.\n"
         "   - **'darkest'** (가장 어두운) == **`classes[0]`** (예: `10`)\n"
         "   - **'brightest'** (가장 밝은) == **`classes[-1]`** (예: `50`)\n"
-        "8. **(힌트 타입 분기) [RESTORED]** `final_class_hint_start`가 `\"red_1\"` (문자열 ID)이면 (AI가 생성한) `project_point_onto_line`을, `10` (숫자)이면 (AI가 생성한) `max_point_in_class` 등을 호출하는 **분기 로직**을 정확히 구현하라.\n\n"
+        "8. **(힌트 타입 분기)** `final_class_hint_start`가 `\"red_1\"` (문자열 ID)이면 (AI가 생성한) `project_point_onto_line`을, `10` (숫자)이면 (AI가 생성한) `max_point_in_class` 등을 호출하는 **분기 로직**을 정확히 구현하라.\n\n"
 
         "## [매우 중요] 출력 및 환경 규칙 (필수 준수):\n\n"
         
-        "1. **(최종 코드) [RESTORED]** 너는 [Reference Code]의 구조와 너가 수정한 로직을 '병합'하여 '완전한' 스크립트 '전체'를 '하나의' 파이썬 코드로 출력해야 한다.\n"
-        "2. **(마크다운 금지) [RESTORED]** 절대 마크다운 코드펜스(```)를 사용하지 마라.\n"
-        "3. **(템플릿 준수) [RESTORED]** [Reference Code]의 `main()` 함수, `argparse` 로직을 **'최대한'** 준수하라.\n"
-        "4. **(CSV 헤더) [RESTORED]** `measurements.csv` 파일 저장 시, **'반드시'** 다음 표준 헤더 리스트를 사용해야 한다: `CSV_HEADERS = {CSV_HEADERS_LIST_STR}`\n"
-        "5. **(Import 금지) [RESTORED]** `measurement_utils`라는 파일은 존재하지 않는다. **'절대'** `import measurement_utils`를 시도하지 마라.\n"
-        "6. **(meta_utils 규칙) [RESTORED]** `import meta_utils`는 '필수'이다. `load_pixel_scale_um` 함수는 `(umx, umy, classes_list, meta_path_str)` 4개의 값을 반환한다고 **'반드시'** 가정해야 한다.\n"
-    )
-    
-    user_msg = (
-        f"아래 [New Logic Hint (SDIFF)]의 '값'과 [Reference Code (Top-1 Few-Shot)]의 '구조'를 참고하여 **'완전한'** 스크립트를 생성하세요.\n"
-        f"- **[규칙]** [Reference Code]의 **'상수'**는 무시하고, **'오직'** [New Logic Hint (SDIFF)]의 **'값'** (예: `final_class_hint_end: 10`, `darkest` -> `classes[0]`)을 사용하세요.\n"
-        f"- **[규칙] [FIXED]** `green.lines`의 `group_id_vlm` 키와 `notes.grouping_logic`의 'pairs' 힌트를 사용하여 '짝을 짓는' 로직을 **'스스로 추론'**하여 구현하세요. (힌트: `Top-1` 코드의 `zip` 로직은 '무시'하세요.)\n"
-        f"- **[규칙]** SDIFF의 `grounded_rois`가 존재하면, `connectedComponents` 대신 **ROI 기반 루프**로 헬퍼 함수를 '수정'하세요.\n"
-        f"- **[규칙]** `grounded_rois`가 없다면, `connectedComponents`가 실패할 경우 `cv2.MORPH_OPEN` (열림 연산)을 사용하는 **Fallback** 로직을 '추가'하세요.\n"
-        f"- **[규칙]** `measurement_utils`는 '절대' `import`하지 마세요.\n"
-        f"- **[규칙] [RESTORED]** `mask_merge_path` 인자는 절대 사용하지 마세요.\n"
-        f"- 절대 마크다운 코드펜스 없이 순수 파이썬 코드만 출력하세요.\n\n"
-        
-        f"=== [유일한 진실] New Logic Hint (SDIFF) ===\n"
-        f"{guide_text_with_sdiff}\n\n"
-        
-        f"=== [구조 참고용] Reference Code (Top-1 Few-Shot) ===\n"
-        f"```python\n{top_1_code_str if top_1_code_str else '# No reference code available, generate from scratch.'}\n```"
+        "1. **(최종 코드)** 너는 [Reference Code]의 구조와 너가 수정한 로직을 '병합'하여 '완전한' 스크립트 '전체'를 '하나의' 파이썬 코드로 출력해야 한다.\n"
+        "2. **(마크다운 금지)** 절대 마크다운 코드펜스(```)를 사용하지 마라.\n"
+        "3. **(템플릿 준수)** [Reference Code]의 `main()` 함수, `argparse` 로직을 **'최대한'** 준수하라.\n"
+        "4. **(CSV 헤더)** `measurements.csv` 파일 저장 시, **'반드시'** 다음 표준 헤더 리스트를 사용해야 한다: `CSV_HEADERS = {CSV_HEADERS_LIST_STR}`\n"
+        "5. **(Import 금지)** `measurement_utils`라는 파일은 존재하지 않는다. **'절대'** `import measurement_utils`를 시도하지 마라.\n"
+        "6. **(meta_utils 규칙)** `import meta_utils`는 '필수'이다. `load_pixel_scale_um` 함수는 `(umx, umy, classes_list, meta_path_str)` 4개의 값을 반환한다고 **'반드시'** 가정해야 한다.\n"
+        "7. **(인자 금지)** [Reference Code]에 `mask_merge_path` 인자가 있더라도, '절대' `argparse`에 추가하지 마라.\n"
     )
 
-    resp = llm.invoke([SystemMessage(content= sys_msg), HumanMessage(content= user_msg)])
+    # [NEW] 'messages' 배열 구성
+    messages = [
+        SystemMessage(content=sys_msg),
+        
+        # Message 1: The Example (Top-1 Code)
+        HumanMessage(content=(
+            "=== [1. 구조 참고용 예제 코드 (Top-1 Few-Shot)] ===\n"
+            "이 코드의 '구조'만 참고하라. 이 코드의 '로직'이나 '값'은 현재 작업과 무관하다.\n"
+            "이 코드의 헬퍼 함수 선언(def)을 보고 필요한 헬퍼 함수를 추론하라.\n\n"
+            f"```python\n{top_1_code_str if top_1_code_str else '# No reference code available'}\n```"
+        )),
+        
+        # Message 2: Fake AI Response (to separate concerns)
+        AIMessage(content="알겠다. 예제 코드의 구조를 파악했다. 이제 새로운 SDIFF 힌트를 제공하라."),
+        
+        # Message 3: The Actual Task (SDIFF)
+        HumanMessage(content=(
+            "=== [2. 새로운 SDIFF 힌트 (유일한 진실)] ===\n"
+            "이제, 아까 본 예제 코드의 '구조'를 사용하되, '오직' 아래 SDIFF 힌트의 '논리'에 맞는 '완전한' 새 코드를 생성하라.\n"
+            "(규칙: `mask_merge_path` 인자는 절대 사용하지 마라.)\n\n"
+            f"{guide_text_with_sdiff}"
+        ))
+    ]
+    
+    # --- [NEW] Logging Logic ---
+    if os.getenv("DEBUG_GPTOSS_PROMPT", "1") == "1":
+        try:
+            debug_messages_content = []
+            debug_messages_content.append(f"\n--- [Two-Message Strategy Log @ {time.strftime('%Y-%m-%d %H:%M:%S')}] ---\n")
+            
+            # [FIX] System Message 로깅 추가
+            debug_messages_content.append(f"--- [Message 0: SYSTEM] ---\n{sys_msg}\n")
+            
+            for i, msg in enumerate(messages[1:], 1): # (System msg는 이미 로깅했으므로 1부터 시작)
+                role = getattr(msg, 'role', 'unknown')
+                content = getattr(msg, 'content', '')
+                content_str = str(content) # Simple str conversion for logging
+
+                # Truncate long content (Top-1 code) for logging
+                if role == 'user' and "구조 참고용 예제 코드" in content_str:
+                    if len(content_str) > 2000:
+                         content_log = content_str[:2000] + "\n...[TRUNCATED IN LOG]"
+                    else:
+                         content_log = content_str
+                else:
+                    content_log = content_str # SDIFF part is crucial, don't truncate
+
+                debug_messages_content.append(f"--- [Message {i}: {role.upper()}] ---\n{content_log}\n")
+            
+            # Use _dump_debug to append to the existing log
+            _dump_debug(stem, "gptoss_gen_sdiff.debug.txt", "\n".join(debug_messages_content))
+        except Exception as e:
+            log.warning(f"[GPT-OSS] Failed to log Two-Message Strategy: {e}")
+    # --- [NEW] End Logging ---
+
+    # [The Invoke Call]
+    resp = llm.invoke(messages)
     code = _extract_text_from_aimessage(resp).strip()
     code = _strip_code_fence(code)
 
     if code.strip():
         return code
 
-    # 1회 재시도
-    retry_user = user_msg + "\n\n[중요] 지금 바로 '파이썬 코드 본문'만 출력하세요. 주석은 허용, 설명문 금지."
-    resp2 = llm.invoke([SystemMessage(content= sys_msg), HumanMessage(content= retry_user)])
-    code2 = _extract_text_from_aimessage(resp2).strip()
-    return _strip_code_fence(code2)
-
-    # 1회 재시도
-    retry_user = user_msg + "\n\n[중요] 지금 바로 '파이썬 코드 본문'만 출력하세요. 주석은 허용, 설명문 금지."
-    resp2 = llm.invoke([SystemMessage(content= sys_msg), HumanMessage(content= retry_user)])
+    # 1회 재시도 (기존 메시지 리스트에 추가)
+    log.warning("[GPT-OSS] Empty code received on first attempt, retrying...")
+    retry_msg = HumanMessage(content="[재시도] 출력이 비어있다. SDIFF 힌트에 맞는 '완전한' 파이썬 코드만 즉시 출력하라.")
+    messages.append(retry_msg) # 이전 대화에 이어서 재시도 요청
+    
+    # [NEW] 재시도 로깅
+    if os.getenv("DEBUG_GPTOSS_PROMPT", "1") == "1":
+        try:
+            _dump_debug(stem, "gptoss_gen_sdiff.debug.txt", 
+                        f"\n--- [Retry Message {len(messages)}: USER] ---\n{retry_msg.content}\n")
+        except Exception:
+            pass
+            
+    resp2 = llm.invoke(messages)
     code2 = _extract_text_from_aimessage(resp2).strip()
     return _strip_code_fence(code2)
         
@@ -3705,6 +3790,13 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
               '데이터 중복' 원인인 `green_measures_refined.[*].vlm_refinement.group_id` 키만 '삭제'합니다.
               
     [BUG FIX] (Concern 2) 'gptoss_gen_sdiff.raw_qwen.txt' 로깅이 누락된 버그 수정.
+    
+    [PLAN J FIX] "Empty Code" (Data Missing) 문제 해결:
+    - [FIXED] `pop("raw_text")` 및 `_sanitize_structured_diff_semantics` 호출을
+              '완전히 제거'하여 모든 논리/데이터 힌트가 GPT-OSS로 전달되도록 수정.
+    - [KEPT] "Two-Message" 전략을 위해 'Top-1 코드 전체'를 로드하여 전달.
+    - [KEPT] "Empty Code"가 계속될 경우를 대비하여, Top-1 코드의 길이를
+             강제로 자를 수 있는 `MAX_FEWSHOT_LEN` 테스트 코드를 (주석 처리된 상태로) 유지.
     """
     try:
         import json, os
@@ -3712,7 +3804,7 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
         # import ast # (더 이상 사용되지 않음)
 
         image_name = payload.get("image_name")
-        structured_diff_text = payload.get("structured_diff_text", "") # 원본 SDIFF (JSON 문자열)
+        structured_diff_text = payload.get("structured_diff_text", "") # 원본 V6 SDIFF (JSON 문자열)
 
         if not image_name or not structured_diff_text:
             return JSONResponse({"ok": False, "error": "image_name and structured_diff_text required"}, status_code=200)
@@ -3731,66 +3823,14 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
             except Exception as e:
                 log.warning(f"Failed to create brightness map for GPT-OSS: {e}")
 
-        # --- 2. [BUG FIX] SDIFF '데이터 중복' 제거 ---
+        # --- 2. [FIXED] SDIFF 정제 로직 '완전 제거' ---
+        # `vl_sdiff_qwen`이 생성한 V6 SDIFF를 그대로 사용합니다.
+        structured_diff_full_text = structured_diff_text
+        original_raw_text_for_logging = structured_diff_text # V6 SDIFF를 로깅
         
-        sdiff_dict = {}
-        # [BUG FIX 2] 로깅을 위해 원본 raw_text를 먼저 저장
-        original_raw_text_for_logging = ""
+        # --- 3. [REMOVED] `_sanitize_structured_diff_semantics` 호출 제거 ---
         
-        try:
-            # SDIFF 텍스트를 파이썬 딕셔너리로 파싱 (json5 사용)
-            sdiff_dict = _parse_qwen_json(structured_diff_text)
-            
-            # [BUG FIX 2] `notes.raw_text`가 pop되기 전에 원본 저장
-            if "notes" in sdiff_dict and sdiff_dict["notes"]:
-                original_raw_text_for_logging = sdiff_dict["notes"].get("raw_text", structured_diff_text)
-            else:
-                original_raw_text_for_logging = structured_diff_text
-            
-            # [BUG FIX 1] 'notes'에서 모순/중복되는 '데이터'만 '외과적으로' 삭제합니다.
-            if "notes" in sdiff_dict and sdiff_dict["notes"]:
-                
-                # 'notes.raw_text' (불필요한 원본 Q/A)는 삭제
-                sdiff_dict["notes"].pop("raw_text", None)
-                
-                # 'notes.raw_text_cleaned_answer' (VLM 논리)는 '보존'
-                if "raw_text_cleaned_answer" in sdiff_dict["notes"]:
-                    
-                    if isinstance(sdiff_dict["notes"]["raw_text_cleaned_answer"], dict):
-                        # [핵심] '중복 데이터' (`green_measures_refined`) 리스트를 순회
-                        green_refined_list = sdiff_dict["notes"]["raw_text_cleaned_answer"].get("green_measures_refined", [])
-                        if isinstance(green_refined_list, list):
-                            for green_item in green_refined_list:
-                                # 'vlm_refinement' 딕셔너리에서
-                                if isinstance(green_item, dict) and green_item.get("vlm_refinement"):
-                                    # 'group_id' 키만 '삭제'
-                                    green_item["vlm_refinement"].pop("group_id", None)
-                                    
-                        # [선택적] Red도 `group_id`가 있다면 삭제 (일관성을 위해)
-                        red_refined_list = sdiff_dict["notes"]["raw_text_cleaned_answer"].get("red_guides_refined", [])
-                        if isinstance(red_refined_list, list):
-                             for red_item in red_refined_list:
-                                if isinstance(red_item, dict) and red_item.get("vlm_refinement"):
-                                    red_item["vlm_refinement"].pop("group_id", None)
-                        
-        except Exception as e:
-            log.error(f"[GPT-OSS Prep] SDIFF parsing or cleaning failed: {e}. Passing empty SDIFF to GPT-OSS.")
-            sdiff_dict = {} 
-        
-        # --- 3. `endpoints` 및 `detected_...` 힌트 제거 ---
-        structured_diff_semantic_text = "{}"
-        if sdiff_dict: 
-            # `_sanitize_structured_diff_semantics`를 호출하여 
-            # LLM에게 '치팅' 힌트(endpoints 등)만 제거
-            # (이 함수는 'notes.raw_text_cleaned_answer'를 보존함)
-            structured_diff_semantic_text, geom_removed, geom_parsed = _sanitize_structured_diff_semantics(sdiff_dict)
-        
-            if not geom_parsed: 
-                log.error("[GPT-OSS Prep] _sanitize_structured_diff_semantics FAILED. Passing empty SDIFF to GPT-OSS.")
-                structured_diff_semantic_text = "{}"
-        
-
-        # --- 4. Top-1 Few-shot '전체 코드' 로드 (구조 참고용) ---
+        # --- 4. Top-1 Few-shot '전체 코드' 로드 (Slimming 없음) ---
         top_1_code_str = "" # 기본값: 빈 문자열
         sels = []
         try:
@@ -3799,31 +3839,39 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 best_dir = Path(sels[0]["_dir"])
                 code_path = best_dir / "code.py"
                 if code_path.exists():
+                    # '전체' 코드를 그대로 읽음
                     top_1_code_str = code_path.read_text(encoding="utf-8", errors="ignore")
-                    log.info(f"[GPT-OSS Prep] Loaded Top-1 few-shot code (ID: {sels[0]['id']}) for structure reference.")
+                    log.info(f"[GPT-OSS Prep] Loaded FULL Top-1 code (ID: {sels[0]['id']}) for structure reference.")
                 else:
                     log.warning(f"[GPT-OSS Prep] Top-1 few-shot found (ID: {sels[0]['id']}) but code.py is missing.")
             else:
                 log.warning("[GPT-OSS Prep] No Top-1 few-shot found. AI will generate code without a structural reference.")
         except Exception as e:
             log.warning(f"[GPT-OSS Prep] Top-1 few-shot load failed: {e}")
-        # --- [CHANGED] 끝 ---
+        # --- [FIXED] 끝 ---
+        
+        # --- [RE-ADDED] 4.5 입력 길이 테스트 (Hypothesis Test) ---
+        # (Empty Code가 계속되면 이 코드의 주석을 해제하고 1000 등으로 값을 낮춰 테스트)
+        # ---------------------------------------------------
+        # MAX_FEWSHOT_LEN = 4000 # (예: 4000자)
+        # if len(top_1_code_str) > MAX_FEWSHOT_LEN:
+        #     log.warning(f"[GPT-OSS Prep] LENGTH TEST: Truncating Top-1 code from {len(top_1_code_str)} to {MAX_FEWSHOT_LEN} chars.")
+        #     top_1_code_str = top_1_code_str[:MAX_FEWSHOT_LEN]
+        # ---------------------------------------------------
 
-        # --- 5. SDIFF + MASK METADATA 결합 ---
+
+        # --- 5. SDIFF + MASK METADATA 결합 (이것이 guide_text_with_sdiff가 됨) ---
         full_prompt_list = []
         full_prompt_list.append("Generate a Python script based on the [STRUCTURED_DIFF] hint below.")
         full_prompt_list.append("Your code MUST import and use functions from `meta_utils`.")
-        full_prompt_list.append("\n## [STRUCTURED_DIFF SEMANTIC HINTS (Refined)]\n")
         
-        note_line = "(All geometric coordinates (endpoints) and old 'detected_' hints have been removed. Recalculate geometry using 'final_' hints and logic.)\n"
-        full_prompt_list.append(note_line)
-        # [FIX] '중복 데이터'만 제거된 '깨끗한' SDIFF 텍스트
-        full_prompt_list.append(structured_diff_semantic_text)  
+        # [FIXED] 'V6 SDIFF' (NLP 힌트 포함)를 전달
+        full_prompt_list.append(structured_diff_full_text)  
 
         if meta_sum:
             try:
                 meta_json_str = json.dumps(meta_sum, ensure_ascii=False, indent=2)
-                full_prompt_list.append("\n\n### MASK METADATAv(Data/Hints for Algorithm)\n")
+                full_prompt_list.append("\n\n### MASK METATADATAv(Data/Hints for Algorithm)\n")
                 full_prompt_list.append(meta_json_str)
             except Exception as e:
                 log.warning(f"Failed to serialize Meta Summary for prompt: {e}")
@@ -3836,18 +3884,26 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 debug_path = (RUN_DIR / stem / "gptoss_gen_sdiff.debug.txt")
                 debug_content = []
                 debug_content.append(f"[gptoss_generate_from_sdiff log @ {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
-                debug_content.append("--- 1. SDIFF Hint + MASK METADATA (Combined & Corrected & Sanitized) ---\n")
+                
+                # [FIXED] full_prompt는 이제 'V6 SDIFF'를 포함
+                debug_content.append("--- 1. [FULL V6] SDIFF Hint + MASK METADATA ---\n")
                 debug_content.append(full_prompt)
                 
-                debug_content.append(f"\n\n--- 2. [NEW] Reference Code (Top-1 Few-Shot) --- (ID: {sels[0]['id'] if sels else 'N/A'})\n")
+                debug_content.append(f"\n\n--- 2. [FULL/TRUNCATED] Reference Code (Top-1 Few-Shot) --- (ID: {sels[0]['id'] if sels else 'N/A'})\n")
                 if top_1_code_str:
-                    debug_content.append(top_1_code_str)
+                    # 디버그 로그에는 전체 코드를 쓰면 너무 길어지므로, 요약본(혹은 잘라서) 로깅
+                    if len(top_1_code_str) > 2000:
+                        debug_content.append(top_1_code_str[:2000] + "\n...[TRUNCATED IN LOG]")
+                    else:
+                        debug_content.append(top_1_code_str)
                 else:
                     debug_content.append("(Top-1 code not found or failed to load)")
                 
+                # [FIX] 디버그 파일은 여기서 '덮어쓰기' (w)로 저장
                 debug_path.write_text("\n".join(debug_content), encoding="utf-8")
                 
-                # [BUG FIX 2] 원본 Qwen raw_text (질문+답변)를 별도 파일에 로깅 (복원)
+                # 원본 Qwen raw_text (질문+답변)를 별도 파일에 로깅
+                # [FIX] 'original_raw_text_for_logging'이 V6 SDIFF 자체를 가리키도록 수정
                 debug_path_raw_qwen = (RUN_DIR / stem / "gptoss_gen_sdiff.raw_qwen.txt")
                 debug_path_raw_qwen.write_text(original_raw_text_for_logging or "(raw_text not found)", encoding="utf-8")
                 
@@ -3855,7 +3911,8 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 log.warning(f"[gptoss_generate_sdiff] debug log failed: {e}")
 
         # --- 7. 전용 Invoker 호출 (위 1번 함수) ---
-        code = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt, top_1_code_str).strip()
+        # [FIXED] '전체' Top-1 코드와 'stem'을 전달
+        code = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt, top_1_code_str, stem).strip()
         code = _strip_code_fence(code)
 
         # (이하 로깅 및 반환은 동일)
@@ -3879,7 +3936,8 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 "- Use the correct 'class_val' from MASK METADATA and SDIFF HINTS.\n"
             )
             full_prompt_2 = full_prompt + "\n\n[FEEDBACK]\n" + feedback + "\n"
-            code2 = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt_2, top_1_code_str).strip()
+            # [FIXED] '전체' Top-1 코드와 'stem'을 전달
+            code2 = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt_2, top_1_code_str, stem).strip()
             code2 = _strip_code_fence(code2)
 
             if code2.strip():
@@ -3891,7 +3949,8 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
     except Exception as e:
         log.exception("[gptoss/generate_from_sdiff] failed")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=200)
-    
+
+   
 @app.post("/gptoss/generate")
 async def gptoss_generate(payload: dict = Body(...)):
     """
@@ -4384,3 +4443,5 @@ if __name__ == "__main__":
     log.info(f"QWEN_ENABLE={QWEN_ENABLE} MODEL_ID={QWEN_MODEL_ID} DEVICE={QWEN_DEVICE} DTYPE={QWEN_DTYPE}")
     uvicorn.run(app, host="0.0.0.0", port=port)
 
+
+    
