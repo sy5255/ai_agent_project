@@ -91,10 +91,16 @@ GPTOSS_SEND_SYSTEM_NAME = os.getenv("GPTOSS_SEND_SYSTEM", "AutoMeasure")
 GPTOSS_USER_ID   = os.getenv("GPTOSS_USER_ID", "ss") 
 GPTOSS_USER_TYPE = os.getenv("GPTOSS_USER_TYPE", "ss") 
 
+GAUSSO_BASE_URL = os.getenv("GAUSSO_BASE_URL", "http://gauss/o/think/v2") # (예시 URL, 실제 URL로 변경 필요) 
+GAUSSO_MODEL     = os.getenv("GAUSSO_MODEL", "GaussO-Owl-Ultra-Think")
+GAUSSO_X_DEP_TICKET = os.getenv("GAUSSO_X_DEP_TICKET", "12345") 
+GAUSSO_SEND_SYSTEM_NAME = os.getenv("GAUSSO_SEND_SYSTEM", "AutoMeasure")
+GAUSSO_USER_ID   = os.getenv("GAUSSO_USER_ID", "ss") 
+GAUSSO_USER_TYPE = os.getenv("GAUSSO_USER_TYPE", "ss") 
 # 최대 이미지 수 제한 (OpenAI 호환: 5장)
 MAX_IMAGES_PER_PROMPT = 5
 
-
+# OpenAI 호환 키(사내 게이트웨이에서 요구될 수 있음)
 #os.environ.setdefault("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", "dummy-key"))
 os.environ['OPENAI_API_KEY'] = 'api_key'
 
@@ -148,7 +154,62 @@ _dino_pipe = None # (processor, model, device) 튜플을 캐시
 # -----------------------------
 # [NEW] CSV 표준 헤더 normalize (단일 파일용)
 # -----------------------------
+# [NEW] CSV 헤더를 상수로 정의
+CSV_HEADERS_LIST_STR = (
+    "['measure_item', 'group_id', 'index', 'value_nm', "
+    "'sx', 'sy', 'ex', 'ey', "
+    "'meta_tag', 'component_label', "
+    "'image_name', 'run_id', 'note']"
+)
 
+# [NEW] 기존 System 프롬프트 내용을 이 상수로 이동
+_GPTOSS_SDIFF_RULES_PROMPT = f"""
+너는 파이썬 스크립트 생성 전문가다.
+너의 임무는 [New Logic Hint (SDIFF)]를 기반으로, [Reference Code (Top-1 Few-Shot)]의 **'구조'**를 참고하여 **'완전한 새 스크립트'**를 생성하는 것이다.
+대화는 두 단계로 진행된다:
+1. (첫 번째 User 메시지): 너는 '구조 참고용' [Reference Code]를 받는다.
+2. (두 번째 User 메시지): 너는 '새로운' [New Logic Hint (SDIFF)]를 받는다.
+너의 유일한 출력은 SDIFF 힌트(2)를 예제 코드(1)의 구조에 맞춰 구현한 **'완전한' 파이썬 코드**여야 한다.
+
+## [매우 중요] 상수 값 및 구조 규칙 (필수 준수):
+
+1. **(SDIFF 우선)** 너는 **'반드시'** [New Logic Hint (SDIFF)]에 명시된 **'새로운'** 값 (예: `final_class_hint_end: 10`, `darkest`)을 사용해야 한다.
+2. **(참조 코드 무시)** [Reference Code] 내에 하드코딩된 **'모든'** 상수 값 (예: `target_class=50`, `tolerance=5`)은 **'절대'** 사용하지 말고, **'반드시'** SDIFF의 정보로 **'대체'**해야 한다.
+3. **(혼동 금지)** [Reference Code]는 오직 `import`, `def` 헬퍼 함수, `main` 함수의 **'구조(Structure)'**를 참고하기 위한 '스타일 가이드'일 뿐, 그 안의 **'값(Value)'**은 현재 작업과 무관하다.
+
+## [매우 중요] CV 및 로직 생성 규칙 (필수 준수):
+
+1. **(유일한 진실)** [New Logic Hint (SDIFF)] (`green.lines`, `red.lines`, `notes`의 '논리')만을 **'유일한 진실'**로 삼아 로직을 구현하라.
+2. **(최우선 경로: Grounding)** SDIFF의 `red.lines[0].grounded_rois` 키에 **좌표 리스트(ROIs)**가 존재하는지 '반드시' 확인하라.
+3. **(Grounding 구현)** 만약 `grounded_rois` 리스트가 존재한다면:
+    a. 너는 [Reference Code]의 `connectedComponents` 로직을 **'반드시' 버려야 한다**.
+    b. 대신, 이 `grounded_rois` 리스트(예: 4개의 ROI)를 `for` 루프로 순회해야 한다.
+    c. 각 루프에서, 원본 마스크를 `roi` 좌표로 잘라낸 `finger_roi_mask`를 생성해야 한다.
+    d. 이 `finger_roi_mask`에 대해 [Reference Code]의 `min_point_in_class` (또는 `max_point_in_class`) 헬퍼 함수를 호출하여 각 컴포넌트의 픽셀 좌표를 찾아야 한다.
+4. **(그룹핑 논리)** SDIFF의 `notes.grouping_logic.description`에 'pair' 힌트가 있는지, 그리고 `green.lines`의 `group_id_vlm` 키(예: 'pair_1')를 확인하라.
+   a. 이 경우, 너는 [Reference Code]의 '반복' 구조(예: `zip`)가 SDIFF의 '논리'('3 pairs')와 **'모순'**된다는 것을 인지해야 한다.
+   b. 너는 **'반드시'** `Top-1` 코드의 `zip` 구조를 **'무시'**하고, SDIFF의 '논리'를 따르는 **'새로운 반복문'** (예: `itertools.groupby` 또는 x좌표 정렬 후 2개씩 묶기)을 **'새로 구현'**해야 한다.
+5. **(Fallback 경로: Morphology)** 만약 `grounded_rois` 리스트가 `None`이거나 존재하지 *않고*, SDIFF가 'N개'의 컴포넌트(예: '4개 핑거')를 요구한다면:
+    a. [Reference Code]의 `connectedComponents` 로직을 사용하되, 견고하게(robustly) 수정해야 한다.
+    b. `cv2.connectedComponents`를 1차 호출하고, 반환된 개수(예: `1`)가 SDIFF의 요구(예: `4`)보다 적은지 확인하라.
+    c. 만약 개수가 적다면(즉, `1 < 4`), `cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)` (열림 연산)을 적용하여 '얇은 브릿지'를 제거한 '새 마스크'를 생성하라.
+    d. 이 '열림 연산 마스크'에 대해 `cv2.connectedComponents`를 2차 호출하여 SDIFF가 요구한 'N개'의 컴포넌트를 확보하라.
+6. **(헬퍼 함수 생성/수정)** `measure_logic`에 필요한 **'모든'** 헬퍼 함수 (예: `fit_red_line`, `project_point_onto_line`, `find_max_y_point`)를 [Reference Code]의 구조를 참고하여 **'새로 생성(def)하거나 수정'**해야 한다.
+7. **(클래스 매핑)** `main`에서 전달받은 `classes` 리스트(예: `[10, 30, 50]`)를 사용하여, SDIFF 힌트의 **'의미론적'** 설명(예: 'darkest')을 **'정확한'** 클래스 값으로 **'직접'** 매핑해야 한다.
+   - **'darkest'** (가장 어두운) == **`classes[0]`** (예: `10`)
+   - **'brightest'** (가장 밝은) == **`classes[-1]`** (예: `50`)
+8. **(힌트 타입 분기)** `final_class_hint_start`가 `"red_1"` (문자열 ID)이면 (AI가 생성한) `project_point_onto_line`을, `10` (숫자)이면 (AI가 생성한) `max_point_in_class` 등을 호출하는 **분기 로직**을 정확히 구현하라.
+
+## [매우 중요] 출력 및 환경 규칙 (필수 준수):
+
+1. **(최종 코드)** 너는 [Reference Code]의 구조와 너가 수정한 로직을 '병합'하여 '완전한' 스크립트 '전체'를 '하나의' 파이썬 코드로 출력해야 한다.
+2. **(마크다운 금지)** 절대 마크다운 코드펜스(```)를 사용하지 마라.
+3. **(템플릿 준수)** [Reference Code]의 `main()` 함수, `argparse` 로직을 **'최대한'** 준수하라.
+4. **(CSV 헤더)** `measurements.csv` 파일 저장 시, **'반드시'** 다음 표준 헤더 리스트를 사용해야 한다: `CSV_HEADERS = {CSV_HEADERS_LIST_STR}`
+5. **(Import 금지)** `measurement_utils`라는 파일은 존재하지 않는다. **'절대'** `import measurement_utils`를 시도하지 마라.
+6. **(meta_utils 규칙)** `import meta_utils`는 '필수'이다. `load_pixel_scale_um` 함수는 `(umx, umy, classes_list, meta_path_str)` 4개의 값을 반환한다고 **'반드시'** 가정해야 한다.
+7. **(인자 금지)** [Reference Code]에 `mask_merge_path` 인자가 있더라도, '절대' `argparse`에 추가하지 마라.
+"""
 
 def _lazy_load_qwen() -> bool:
     """
@@ -1148,10 +1209,14 @@ def _semantic_from_orientation(ori: str) -> str:
 
 # [REPLACE] _enrich_lines 함수
 def _enrich_lines(lines: List[Dict[str,int]], role: str, um_per_px_x: float = 0.0, mask_img: Optional[np.ndarray] = None) -> List[Dict[str,object]]:
-    """ 
+    """
     [CHANGED] VLM의 추론을 위해 모든 CV '사실' 힌트를 주입합니다.
     - 'red' (가이드): '선 전체'를 샘플링하여 `detected_class_hint` (위치) 추가.
     - 'green' (측정): '양 끝점'을 샘플링하여 `detected_class_hint_start`와 `detected_class_hint_end` (양쪽 위치) 추가.
+   
+    [MODIFIED by USER REQUEST]
+    - Green line의 start/end 힌트를 15px 반경(box) 대신,
+      선분 끝에서 30px을 '선분 방향으로' 샘플링합니다.
     """
     out=[]
     # (Heuristics) 이 값은 튜닝이 필요할 수 있습니다.
@@ -1195,22 +1260,36 @@ def _enrich_lines(lines: List[Dict[str,int]], role: str, um_per_px_x: float = 0.
                 semantic_role = "reference_guide_v"
             else:
                 semantic_role = f"{ori}_guide"
-        
+       
         elif role == "green":
             # [GREEN] 측정선은 '양 끝점'을 모두 샘플링
-            class_hint_start = _sample_class_near_point(mask_img, x1, y1, radius=15)
-            class_hint_end = _sample_class_near_point(mask_img, x2, y2, radius=15)
-            
+           
+            # --- [MODIFIED LOGIC] ---
+            # 15px 반경(box) 대신, 선분 끝에서 30px을 '선분 방향으로' 샘플링
+            class_hint_start = _sample_class_at_line_end(
+                mask_img,
+                x1, y1,  # From point 1
+                x2, y2,  # Towards point 2
+                sample_length=100
+            )
+            class_hint_end = _sample_class_at_line_end(
+                mask_img,
+                x2, y2,  # From point 2
+                x1, y1,  # Towards point 1
+                sample_length=100
+            )
+            # --- [MODIFIED LOGIC END] ---
+           
             # [RESTORED] VLM 추론을 위해 두 힌트를 모두 주입
             out_item["detected_class_hint_start"] = class_hint_start # (e.g., 50)
             out_item["detected_class_hint_end"] = class_hint_end   # (e.g., 10 or 30)
-            
+           
             # (Green 의미론 추론)
             semantic_role = _semantic_from_orientation(ori)
 
         out_item["semantic_role"] = semantic_role
         out.append(out_item)
-        
+       
     return out
 
 def _pair_green_to_nearest_red(greens: List[Dict], reds: List[Dict]):
@@ -1388,6 +1467,26 @@ def _select_topk_fewshots_for(image_name: str, k: int = 2) -> List[Dict]:
         Remaining = [x for x in Remaining if x is not best]
     return selected[:k]
 
+def _build_gausso():
+    """GaussO-Think 모델용 Langchain 클라이언트 빌더"""
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        base_url=GAUSSO_BASE_URL, openai_proxy=GAUSSO_BASE_URL, model=GAUSSO_MODEL,
+        default_headers={
+            "Content-Type":"application/json",
+            "x-dep-ticket":GAUSSO_X_DEP_TICKET,
+            "Send-System-Name":GAUSSO_SEND_SYSTEM_NAME,
+            "User-Id":GAUSSO_USER_ID,
+            "User-Type":GAUSSO_USER_TYPE,
+            "Prompt-Msg-Id": str(uuid.uuid4()),
+            "Completion-Msg-Id": str(uuid.uuid4()),
+        },
+        temperature=0.1,
+        max_tokens=8192, # [FIXED] 8192로 설정
+        timeout=1000,      # [FIXED] 600초(10분)로 설정
+        max_retries=1,
+    )
+
 # ---------------- GPT-OSS 보조 유틸 (안전 호출 & 안전 파싱) ----------------
 def _build_gptoss():
     from langchain_openai import ChatOpenAI
@@ -1402,7 +1501,10 @@ def _build_gptoss():
             "Prompt-Msg-Id": str(uuid.uuid4()),
             "Completion-Msg-Id": str(uuid.uuid4()),
         },
-        temperature=0.1, max_tokens=4096, timeout=240, max_retries=1,
+        temperature=0.1, 
+        max_tokens=8192, 
+        timeout=1000, 
+        max_retries=1,
     )
 
 def _extract_text_from_aimessage(resp_obj: Any) -> str:
@@ -1597,25 +1699,33 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
     - VLM이 '시각적 사실'(연결 여부, ID)만 판단하도록 유지.
     - [NEW] VLM이 'construction_method' 외에, 'grouping_logic'과 'geometric_relationship'을
       '풍부한 자연어'로 설명하도록 질문을 고도화합니다.
-      
+     
     [USER REQUESTED CHANGE]
     - [NEW] VLM이 'Regex 파싱' 대신 Grounding DINO를 위한
       '짧은 명사구 프롬프트'와 '위치 힌트'를 직접 생성하도록
       `grounding_dino_prompt`와 `grounding_location_hint` 키 추가.
+     
+    [MODIFIED by USER REQUEST - Normal Vector & Diagonal Line]
+    - [FIXED] 'grouping_logic'에 'direction_relative_to_red'를 추가하여 Green 라인의 방향(예: '아래로')을 명시적으로 질문.
+    - [FIXED] 'red_guides_refined'에서 'purpose'를 'functional_role'로 변경하고,
+              'actual_geometry'를 추가하여 '기능적 역할'(수평)과 '실제 형상'(대각선)을 분리.
     """
     import json
-    
+   
     desc_options_str = f"e.g., {json.dumps(brightness_descriptors[:2])}" if brightness_descriptors else "(e.g., ['darkest'])"
     desc_list_str = f"Available brightness descriptors: {json.dumps(brightness_descriptors)}"
 
     json_prompt_structure_obj = {
         "analysis_summary": "One-sentence summary of the measurement task.",
-        
-        # [CHANGED] 그룹핑 로직을 더 상세히 질문
+       
+        # [MODIFIED] 그룹핑 로직을 더 상세히 질문
         "grouping_logic": {
             "description": "Are GREEN measures grouped (e.g., '3 intervals, 2 lines per interval') or 6 'independent' lines?",
             "interval_definition": "If grouped by 'intervals', what defines the interval? (e.g., 'Between the 4 red anchor points', 'U-grooves')",
-            "geometric_relationship": "CRITICAL: What is the geometric relationship between red and green lines? (e.g., 'Green lines are perpendicular/normal to the red line', 'Green lines are all vertical')"
+            "geometric_relationship": "CRITICAL: What is the geometric relationship between red and green lines? (e.g., 'Green lines are perpendicular/normal to the red line', 'Green lines are all vertical')",
+           
+            # [NEW] Green 라인 방향성(위/아래) 질문
+            "direction_relative_to_red": "CRITICAL: In which direction do the green lines point *relative to the red line*? (e.g., 'downwards', 'upwards', 'towards the bottom of the image')"
         },
         "red_guides_refined": [],
         "green_measures_refined": []
@@ -1630,16 +1740,20 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
                 "cv_hint_geometric_fact": {"orientation": line.get("orientation")},
                 "cv_hint_to_correct": {"detected_class_hint_by_location": line.get("detected_class_hint")},
                 "vlm_refinement": {
-                    "purpose": "Describe purpose (e.g., 'Horizontal reference line').",
-                    # [CHANGED] "어떻게" 만드는지 구체적으로 설명하도록 요구
-                    "construction_method": "CRITICAL (Detailed): How to build this line? (e.g., 'Fit top-most points of the 4 'darkest' class fingers', 'Find center-line of 'brightest' class', 'Find all 'darkest' pixels and fit a line')",
-                    
+                    # [MODIFIED] 'purpose' -> 'functional_role'
+                    "functional_role": "What is this line's functional role? (e.g., 'Acts as a horizontal reference', 'Acts as a vertical guide')",
+                   
+                    # [NEW] 'actual_geometry' 추가 (역할 vs 형상 분리)
+                    "actual_geometry": "CRITICAL: What is the *actual* geometry of this line? (e.g., 'A single diagonal line', 'A perfectly horizontal line', 'A curved line')",
+                   
+                    "construction_method": "CRITICAL (Detailed): How to build this line? (e.g., 'Fit a single line (cv2.fitLine) to the top-most points of the 4 'darkest' fingers', 'Find center-line of 'brightest' class', 'Find all 'darkest' pixels and fit a line')",
+                   
                     # [NEW] DINO를 위한 명사구 프롬프트 (Regex 대체)
                     "grounding_dino_prompt": "CRITICAL: What is the short noun phrase for Grounding DINO? (e.g., 'four fingers', 'the 4 'darkest' fingers', 'top-most points')",
-                    
+                   
                     # [NEW] DINO를 위한 위치 힌트
                     "grounding_location_hint": "CRITICAL: Choose ONE location keyword that best describes the area: ['top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'center', 'full_image']",
-                    
+                   
                     "required_classes": f"CRITICAL: List of brightness descriptors needed. {desc_options_str}. {desc_list_str}"
                 }
             })
@@ -1650,7 +1764,7 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
     try:
         cv_green_lines = cv_sdiff.get("green_lines_detail", [])
         for line in cv_green_lines:
-            
+           
             cv_start_hint_val = line.get("detected_class_hint_start")
             cv_end_hint_val = line.get("detected_class_hint_end")
 
@@ -1660,21 +1774,21 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
                     "orientation": line.get("orientation"),
                     "semantic": line.get("semantic"),
                 },
-                "cv_hint_to_correct": { 
+                "cv_hint_to_correct": {
                     "detected_class_hint_start": cv_start_hint_val,
                     "detected_class_hint_end": cv_end_hint_val
                 },
                 "vlm_refinement": {
                     "group_id": "What group ID does this line belong to? (Based on 'grouping_logic', e.g., 'interval_1', 'independent_3')",
-                    
+                   
                     # [KEPT] VLM은 '시각적 사실'만 판단
                     "start_is_connected_to_red_guide": "CRITICAL: Does the start point visually connect to *any* red guide line? (true/false)",
                     "end_is_connected_to_red_guide": "CRITICAL: Does the end point visually connect to *any* red guide line? (true/false)",
 
                     "connected_red_guide_id_start": "If 'start_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
                     "connected_red_guide_id_end": "If 'end_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
-                    
-                    # [NEW] 그린 라인 '생성 알고리즘' 설명 요구
+                   
+                    # [NEW] 그린 라인 '생성 알고リズム' 설명 요구
                     "construction_method_start": "CRITICAL (Detailed): How should the START point be calculated? (e.g., 'Projected perpendicularly onto the connected red line', 'Find centroid of start_class', 'Find max-y point of start_class')",
                     "construction_method_end": "CRITICAL (Detailed): How should the END point be calculated? (e.g., 'Find max-y point of end_class within the interval', 'Find centroid of end_class')"
                 }
@@ -1684,6 +1798,59 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
 
     # 3. 직렬화
     return json.dumps(json_prompt_structure_obj, indent=2)
+
+def _sample_class_at_line_end(
+    mask_img: np.ndarray,
+    x1: int, y1: int,  # 샘플링을 시작할 끝점 (FROM)
+    x2: int, y2: int,  # 방향을 알려줄 다른 쪽 끝점 (TOWARDS)
+    sample_length: int = 30
+) -> Optional[int]:
+    """
+    (x1, y1)에서 (x2, y2) 방향으로 'sample_length'(예: 30) 픽셀만큼
+    '선분을 따라서' 샘플링하고, 가장 빈번한 non-zero 클래스를 반환합니다.
+    """
+    if mask_img is None:
+        return None
+    try:
+        # 1. 전체 선분의 총 픽셀 수 계산
+        num_points_total = int(np.hypot(x2 - x1, y2 - y1))
+        if num_points_total == 0:
+            # 점 하나만 샘플링 (Fallback)
+            if 0 <= y1 < mask_img.shape[0] and 0 <= x1 < mask_img.shape[1]:
+                val = mask_img[y1, x1]
+                return int(val) if val > 0 else None
+            return None
+
+        # 2. 전체 선분의 모든 좌표 생성
+        x_coords_all = np.linspace(x1, x2, num_points_total).astype(int)
+        y_coords_all = np.linspace(y1, y2, num_points_total).astype(int)
+       
+        # 3. [요청 사항] 시작점에서 'sample_length' 만큼만 좌표를 자름
+        num_to_sample = min(num_points_total, sample_length)
+        x_coords = x_coords_all[:num_to_sample]
+        y_coords = y_coords_all[:num_to_sample]
+       
+        # 4. 유효한 좌표만 필터링 (선이 화면 밖에서 시작할 경우 대비)
+        H, W = mask_img.shape
+        valid_idx = (x_coords >= 0) & (x_coords < W) & (y_coords >= 0) & (y_coords < H)
+        if not np.any(valid_idx):
+            return None
+           
+        x_coords, y_coords = x_coords[valid_idx], y_coords[valid_idx]
+       
+        # 5. 픽셀 값 샘플링 (0이 아닌 값만)
+        samples = mask_img[y_coords, x_coords]
+        non_zero_samples = samples[samples > 0]
+       
+        if non_zero_samples.size > 0:
+            # 6. 가장 빈번하게 나타나는 클래스 값(최빈값) 반환
+            counts = np.bincount(non_zero_samples)
+            return int(np.argmax(counts))
+        return None # 0(배경) 또는 유효 샘플 없음
+    except Exception as e:
+        log.error(f"[_sample_class_at_line_end] Sampling failed: {e}")
+        return None
+
 
 # -----------------------------
 # Scribble 요약(Qwen) + Fallback
@@ -2378,8 +2545,8 @@ def _parse_qwen_json(raw_text: str) -> Dict:
         log.warning(f"[Qwen] Failed to parse raw_text JSON: {e}")
         log.debug(f"[Qwen] Failing raw_text: {raw_text}")
         return {}
-    
- def _apply_qwen_refinement_to_sdiff_v1(sdiff_v1: Dict, brightness_map: Dict[str, int]) -> Dict:
+
+def _apply_qwen_refinement_to_sdiff_v1(sdiff_v1: Dict, brightness_map: Dict[str, int]) -> Dict:
     """
     [CHANGED] Qwen의 추론 결과('notes.raw_text')를 파싱하고, 'brightness_map'을 사용해
     SDIFF v1 객체('red_lines_detail' 등)의 CV 힌트를 덮어씁니다.
@@ -2877,12 +3044,51 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
 
         log.info(f"Successfully built V6 SDIFF: {sdiff_final['red']['count']} red, {sdiff_final['green']['count']} green.")
         
+        try:
+            run_dir = _run_dir_for(name); _ensure_dir(run_dir)
+            sdiff_path = run_dir / "sdiff_qwen_v6.json"
+            sdiff_path.write_text(json.dumps(sdiff_final, ensure_ascii=False, indent=2), encoding="utf-8")
+            log.info(f"Persisted V6 SDIFF to {sdiff_path}")
+        except Exception as e_save:
+            log.error(f"Failed to persist SDIFF to disk: {e_save}")
+        
         STRUCTURED_DIFF_CACHE[name] = sdiff_final
         return JSONResponse({"ok": True, "structured_diff": sdiff_final})
 
     except Exception as e:
         log.exception("/vl/sdiff_qwen error: %s", e)
         return JSONResponse({"ok": False, "error": str(e)})
+    
+@app.get("/sdiff/get_latest")
+async def sdiff_get_latest(image_name: str = Query(...)):
+    """s
+    메모리 캐시 또는 디스크에 저장된 최신 V6 SDIFF를 불러옵니다.
+    (UI의 setSelected에서 호출)
+    """
+    try:
+        normalized = _normalize_name(image_name)
+        
+        # 1. 인메모리 캐시 우선 확인
+        cached = STRUCTURED_DIFF_CACHE.get(normalized)
+        if cached and isinstance(cached, dict) and cached.get("schema") == "scribble_vlite_v2":
+            return JSONResponse({"ok": True, "structured_diff": cached, "source": "memory_cache"})
+            
+        # 2. 디스크에 저장된 파일 확인
+        run_dir = _run_dir_for(normalized)
+        sdiff_path = run_dir / "sdiff_qwen_v6.json"
+        
+        if sdiff_path.exists():
+            sdiff_json = json.loads(sdiff_path.read_text(encoding="utf-8"))
+            # 3. 디스크 -> 메모리 캐시로 로드
+            STRUCTURED_DIFF_CACHE[normalized] = sdiff_json
+            return JSONResponse({"ok": True, "structured_diff": sdiff_json, "source": "disk_cache"})
+            
+        # 4. 어디에도 없음
+        return JSONResponse({"ok": False, "error": "No cached SDIFF found"}, status_code=404)
+        
+    except Exception as e:
+        log.exception(f"[sdiff/get_latest] Failed to load SDIFF for {image_name}: {e}")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
     
 # ---------- few-shot 자산 ----------
 @app.get("/fewshot/select")
@@ -3006,7 +3212,6 @@ def _reject_merge_copying(code: str) -> str | None:
         if re.search(pat, code):
             return f"Forbidden pattern detected: {pat}"
     return None
-
 
 # [REPLACE] _upgrade_sdiff_to_lite 함수
 def _upgrade_sdiff_to_lite(sdiff: dict | None) -> dict | None:
@@ -3599,134 +3804,76 @@ def _sanitize_structured_diff_semantics(structured_diff: dict) -> Tuple[str, boo
     return sanitized, removed, True
 
 # [NEW] SDIFF -> GPT-OSS 전용 Invoker
-def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, top_1_code_str: str, stem: str) -> str:
+def _safe_invoke_gptoss_for_code_from_sdiff(
+    guide_text_with_sdiff: str,
+    top_1_code_str: str,
+    model_name: str,  # [MODIFIED] model_name 인자 추가
+    stem: str
+) -> str:
     """
     [CRITICAL FIX 17]
-    - [CHANGED] AI가 Top-1 예제에 오염되는 것을 막기 위해,
-      'measurement_utils'의 언급을 '완전히 제거'하고,
-      '정적 뼈대 코드(Static Template)'를 제공하여 AI가 '로직 생성'에만 집중하도록 수정.
-      
-    [USER REQUESTED CHANGE]
-    - '정적 뼈대 코드' 대신 'Top-1 few-shot 코드' (top_1_code_str)를 구조 참고용으로 주입합니다.
-    - AI에게 '값'은 SDIFF를, '구조'는 Top-1 코드를 따르도록 명확히 지시합니다.
-    - [REVERTED] 기능 변경과 관련 없는 기존의 모든 프롬프트(클래스 매핑, 힌트 분기 등)를 복원합니다.
-    - [CHANGED] SDIFF에 'grounded_rois' 키가 있는지 확인하고,
-            있으면 'ROI 루프' 로직을, 없으면 'Morphology Fallback' 로직을 사용하도록 지시합니다.
-            
-    [BUG FIX] "Empty Code" 에러 해결:
-              AI가 Top-1 '구조' (예: `zip`)와 SDIFF '논리' (예: "3 pairs")
-              간의 '모순'으로 혼란에 빠지지 않도록 프롬프트(CV #4) 수정.
-              
-    [PLAN D FIX] "Empty Code" (Input Length) 문제 해결:
-    - [FIXED] 사용자 아이디어(Sliding Window)를 "Two-Message Strategy"로 구현.
-    - [NEW] Top-1 코드(예제)와 SDIFF(실제 임무)를 별개의 User 메시지로 분리하여
-            길이 한계를 우회하고 프롬프트 충돌을 제거합니다.
-            
-    [DEBUG LOGGING]
-    - [NEW] 'stem' 인자를 받아, Two-Message 배열의 내용을 
-            `gptoss_gen_sdiff.debug.txt`에 추가로 로깅합니다.
-            
-    [PLAN F FIX] Prompt Merging
-    - [FIXED] 사용자님의 '최신 프롬프트' 규칙(CV 1-8, 출력 1-6 등)을 
-              "Two-Message" 전략의 `sys_msg`에 '완벽하게 통합'하여 누락된 지시가 없도록 보강.
+    ...
+    [NEW PLAN (User Idea)]
+    - [FIXED] System 프롬프트(규칙)를 Message 3로 이동하여 토큰 한계 문제 해결.
+    - [FIXED] Message 1에 '전체' Few-shot 코드를 전송.
+    - [MODIFIED] model_name 인자를 받아 GPT-OSS 또는 GaussO-Think 빌더 호출.
     """
     from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-    llm = _build_gptoss()
+   
+    # [MODIFIED] 모델 빌더 선택
+    llm = None
+    if model_name == "gausso":
+        log.info("[Invoker] Using GaussO-Think builder.")
+        llm = _build_gausso()
+    else:
+        log.info("[Invoker] Using GPT-OSS builder.")
+        llm = _build_gptoss()
+    # [MODIFIED END]
 
-    # [CRITICAL] 13개 표준 헤더 (AI에게 명시적으로 주입)
-    CSV_HEADERS_LIST_STR = (
-        "['measure_item', 'group_id', 'index', 'value_nm', "
-        "'sx', 'sy', 'ex', 'ey', "
-        "'meta_tag', 'component_label', "
-        "'image_name', 'run_id', 'note']"
-    )
 
-    # [NEW] 'sys_msg' (Two-Message 전략용, 사용자님의 모든 규칙 포함)
+    # [MODIFIED] System 프롬프트는 최소한의 역할만 수행
     sys_msg = (
-        "너는 파이썬 스크립트 생성 전문가다.\n"
-        "너의 임무는 [New Logic Hint (SDIFF)]를 기반으로, [Reference Code (Top-1 Few-Shot)]의 **'구조'**를 참고하여 **'완전한 새 스크립트'**를 생성하는 것이다.\n"
-        "대화는 두 단계로 진행된다:\n"
-        "1. (첫 번째 User 메시지): 너는 '구조 참고용' [Reference Code]를 받는다.\n"
-        "2. (두 번째 User 메시지): 너는 '새로운' [New Logic Hint (SDIFF)]를 받는다.\n"
-        "너의 유일한 출력은 SDIFF 힌트(2)를 예제 코드(1)의 구조에 맞춰 구현한 **'완전한' 파이썬 코드**여야 한다.\n\n"
-        
-        "## [매우 중요] 상수 값 및 구조 규칙 (필수 준수):\n\n"
-        
-        "1. **(SDIFF 우선)** 너는 **'반드시'** [New Logic Hint (SDIFF)]에 명시된 **'새로운'** 값 (예: `final_class_hint_end: 10`, `darkest`)을 사용해야 한다.\n"
-        "2. **(참조 코드 무시)** [Reference Code] 내에 하드코딩된 **'모든'** 상수 값 (예: `target_class=50`, `tolerance=5`)은 **'절대'** 사용하지 말고, **'반드시'** SDIFF의 정보로 **'대체'**해야 한다.\n"
-        "3. **(혼동 금지)** [Reference Code]는 오직 `import`, `def` 헬퍼 함수, `main` 함수의 **'구조(Structure)'**를 참고하기 위한 '스타일 가이드'일 뿐, 그 안의 **'값(Value)'**은 현재 작업과 무관하다.\n\n"
-        
-        "## [매우 중요] CV 및 로직 생성 규칙 (필수 준수):\n\n"
-        
-        "1. **(유일한 진실)** [New Logic Hint (SDIFF)] (`green.lines`, `red.lines`, `notes`의 '논리')만을 **'유일한 진실'**로 삼아 로직을 구현하라.\n"
-        
-        "2. **(최우선 경로: Grounding)** SDIFF의 `red.lines[0].grounded_rois` 키에 **좌표 리스트(ROIs)**가 존재하는지 '반드시' 확인하라.\n"
-        "3. **(Grounding 구현)** 만약 `grounded_rois` 리스트가 존재한다면:\n"
-        "    a. 너는 [Reference Code]의 `connectedComponents` 로직을 **'반드시' 버려야 한다**.\n"
-        "    b. 대신, 이 `grounded_rois` 리스트(예: 4개의 ROI)를 `for` 루프로 순회해야 한다.\n"
-        "    c. 각 루프에서, 원본 마스크를 `roi` 좌표로 잘라낸 `finger_roi_mask`를 생성해야 한다.\n"
-        "    d. 이 `finger_roi_mask`에 대해 [Reference Code]의 `min_point_in_class` (또는 `max_point_in_class`) 헬퍼 함수를 호출하여 각 컴포넌트의 픽셀 좌표를 찾아야 한다.\n"
-        
-        "4. **(그룹핑 논리)** SDIFF의 `notes.grouping_logic.description`에 'pair' 힌트가 있는지, 그리고 `green.lines`의 `group_id_vlm` 키(예: 'pair_1')를 확인하라.\n"
-        "   a. 이 경우, 너는 [Reference Code]의 '반복' 구조(예: `zip`)가 SDIFF의 '논리'('3 pairs')와 **'모순'**된다는 것을 인지해야 한다.\n"
-        "   b. 너는 **'반드시'** `Top-1` 코드의 `zip` 구조를 **'무시'**하고, SDIFF의 '논리'를 따르는 **'새로운 반복문'** (예: `itertools.groupby` 또는 x좌표 정렬 후 2개씩 묶기)을 **'새로 구현'**해야 한다.\n"
-        
-        "5. **(Fallback 경로: Morphology)** 만약 `grounded_rois` 리스트가 `None`이거나 존재하지 *않고*, SDIFF가 'N개'의 컴포넌트(예: '4개 핑거')를 요구한다면:\n"
-        "    a. [Reference Code]의 `connectedComponents` 로직을 사용하되, 견고하게(robustly) 수정해야 한다.\n"
-        "    b. `cv2.connectedComponents`를 1차 호출하고, 반환된 개수(예: `1`)가 SDIFF의 요구(예: `4`)보다 적은지 확인하라.\n"
-        "    c. 만약 개수가 적다면(즉, `1 < 4`), `cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)` (열림 연산)을 적용하여 '얇은 브릿지'를 제거한 '새 마스크'를 생성하라.\n"
-        "    d. 이 '열림 연산 마스크'에 대해 `cv2.connectedComponents`를 2차 호출하여 SDIFF가 요구한 'N개'의 컴포넌트를 확보하라.\n"
-
-        "6. **(헬퍼 함수 생성/수정)** `measure_logic`에 필요한 **'모든'** 헬퍼 함수 (예: `fit_red_line`, `project_point_onto_line`, `find_max_y_point`)를 [Reference Code]의 구조를 참고하여 **'새로 생성(def)하거나 수정'**해야 한다.\n"
-        "7. **(클래스 매핑)** `main`에서 전달받은 `classes` 리스트(예: `[10, 30, 50]`)를 사용하여, SDIFF 힌트의 **'의미론적'** 설명(예: 'darkest')을 **'정확한'** 클래스 값으로 **'직접'** 매핑해야 한다.\n"
-        "   - **'darkest'** (가장 어두운) == **`classes[0]`** (예: `10`)\n"
-        "   - **'brightest'** (가장 밝은) == **`classes[-1]`** (예: `50`)\n"
-        "8. **(힌트 타입 분기)** `final_class_hint_start`가 `\"red_1\"` (문자열 ID)이면 (AI가 생성한) `project_point_onto_line`을, `10` (숫자)이면 (AI가 생성한) `max_point_in_class` 등을 호출하는 **분기 로직**을 정확히 구현하라.\n\n"
-
-        "## [매우 중요] 출력 및 환경 규칙 (필수 준수):\n\n"
-        
-        "1. **(최종 코드)** 너는 [Reference Code]의 구조와 너가 수정한 로직을 '병합'하여 '완전한' 스크립트 '전체'를 '하나의' 파이썬 코드로 출력해야 한다.\n"
-        "2. **(마크다운 금지)** 절대 마크다운 코드펜스(```)를 사용하지 마라.\n"
-        "3. **(템플릿 준수)** [Reference Code]의 `main()` 함수, `argparse` 로직을 **'최대한'** 준수하라.\n"
-        "4. **(CSV 헤더)** `measurements.csv` 파일 저장 시, **'반드시'** 다음 표준 헤더 리스트를 사용해야 한다: `CSV_HEADERS = {CSV_HEADERS_LIST_STR}`\n"
-        "5. **(Import 금지)** `measurement_utils`라는 파일은 존재하지 않는다. **'절대'** `import measurement_utils`를 시도하지 마라.\n"
-        "6. **(meta_utils 규칙)** `import meta_utils`는 '필수'이다. `load_pixel_scale_um` 함수는 `(umx, umy, classes_list, meta_path_str)` 4개의 값을 반환한다고 **'반드시'** 가정해야 한다.\n"
-        "7. **(인자 금지)** [Reference Code]에 `mask_merge_path` 인자가 있더라도, '절대' `argparse`에 추가하지 마라.\n"
+        "You are an expert Python script generation assistant. "
+        "You will receive a reference code structure first, then the actual task."
     )
 
     # [NEW] 'messages' 배열 구성
     messages = [
         SystemMessage(content=sys_msg),
-        
-        # Message 1: The Example (Top-1 Code)
+       
+        # Message 1: The Example (Top-1 'FULL' Code)
         HumanMessage(content=(
             "=== [1. 구조 참고용 예제 코드 (Top-1 Few-Shot)] ===\n"
             "이 코드의 '구조'만 참고하라. 이 코드의 '로직'이나 '값'은 현재 작업과 무관하다.\n"
             "이 코드의 헬퍼 함수 선언(def)을 보고 필요한 헬퍼 함수를 추론하라.\n\n"
+            # [MODIFIED] 슬리밍된 코드가 아닌 '전체' 코드를 전달
             f"```python\n{top_1_code_str if top_1_code_str else '# No reference code available'}\n```"
         )),
-        
+       
         # Message 2: Fake AI Response (to separate concerns)
-        AIMessage(content="알겠다. 예제 코드의 구조를 파악했다. 이제 새로운 SDIFF 힌트를 제공하라."),
-        
-        # Message 3: The Actual Task (SDIFF)
+        AIMessage(content="알겠다. 예제 코드의 구조를 파악했다. 이제 새로운 SDIFF 힌트와 규칙을 제공하라."),
+       
+        # Message 3: The Actual Task (Rules + SDIFF)
         HumanMessage(content=(
-            "=== [2. 새로운 SDIFF 힌트 (유일한 진실)] ===\n"
-            "이제, 아까 본 예제 코드의 '구조'를 사용하되, '오직' 아래 SDIFF 힌트의 '논리'에 맞는 '완전한' 새 코드를 생성하라.\n"
+            "=== [2. 새로운 SDIFF 힌트 및 규칙 (유일한 진실)] ===\n"
+            "이제, 아까 본 예제 코드의 '구조'를 사용하되, '오직' 아래의 **규칙**과 **SDIFF 힌트**의 '논리'에 맞는 '완전한' 새 코드를 생성하라.\n"
             "(규칙: `mask_merge_path` 인자는 절대 사용하지 마라.)\n\n"
+            # [MODIFIED] 모든 규칙(기존 System 프롬프트)을 이곳으로 이동
+            f"{_GPTOSS_SDIFF_RULES_PROMPT}\n\n"
+            f"--- [New Logic Hint (SDIFF)] ---\n"
             f"{guide_text_with_sdiff}"
         ))
     ]
-    
+   
     # --- [NEW] Logging Logic ---
     if os.getenv("DEBUG_GPTOSS_PROMPT", "1") == "1":
         try:
             debug_messages_content = []
-            debug_messages_content.append(f"\n--- [Two-Message Strategy Log @ {time.strftime('%Y-%m-%d %H:%M:%S')}] ---\n")
-            
-            # [FIX] System Message 로깅 추가
+            debug_messages_content.append(f"\n--- [Two-Message Strategy Log ({model_name}) @ {time.strftime('%Y-%m-%d %H:%M:%S')}] ---\n")
+           
+            # [MODIFIED] System Message 로깅
             debug_messages_content.append(f"--- [Message 0: SYSTEM] ---\n{sys_msg}\n")
-            
+           
             for i, msg in enumerate(messages[1:], 1): # (System msg는 이미 로깅했으므로 1부터 시작)
                 role = getattr(msg, 'role', 'unknown')
                 content = getattr(msg, 'content', '')
@@ -3734,15 +3881,15 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, top_1_co
 
                 # Truncate long content (Top-1 code) for logging
                 if role == 'user' and "구조 참고용 예제 코드" in content_str:
-                    if len(content_str) > 2000:
-                         content_log = content_str[:2000] + "\n...[TRUNCATED IN LOG]"
+                    if len(content_str) > 4000: # 로그 파일이 너무 커지는 것을 방지
+                         content_log = content_str[:4000] + "\n...[TRUNCATED IN LOG]"
                     else:
                          content_log = content_str
                 else:
                     content_log = content_str # SDIFF part is crucial, don't truncate
 
                 debug_messages_content.append(f"--- [Message {i}: {role.upper()}] ---\n{content_log}\n")
-            
+           
             # Use _dump_debug to append to the existing log
             _dump_debug(stem, "gptoss_gen_sdiff.debug.txt", "\n".join(debug_messages_content))
         except Exception as e:
@@ -3758,53 +3905,42 @@ def _safe_invoke_gptoss_for_code_from_sdiff(guide_text_with_sdiff: str, top_1_co
         return code
 
     # 1회 재시도 (기존 메시지 리스트에 추가)
-    log.warning("[GPT-OSS] Empty code received on first attempt, retrying...")
+    log.warning(f"[{model_name}] Empty code received on first attempt, retrying...")
     retry_msg = HumanMessage(content="[재시도] 출력이 비어있다. SDIFF 힌트에 맞는 '완전한' 파이썬 코드만 즉시 출력하라.")
     messages.append(retry_msg) # 이전 대화에 이어서 재시도 요청
-    
+   
     # [NEW] 재시도 로깅
     if os.getenv("DEBUG_GPTOSS_PROMPT", "1") == "1":
         try:
-            _dump_debug(stem, "gptoss_gen_sdiff.debug.txt", 
+            _dump_debug(stem, "gptoss_gen_sdiff.debug.txt",
                         f"\n--- [Retry Message {len(messages)}: USER] ---\n{retry_msg.content}\n")
         except Exception:
             pass
-            
+           
     resp2 = llm.invoke(messages)
     code2 = _extract_text_from_aimessage(resp2).strip()
     return _strip_code_fence(code2)
-        
+
 # [NEW] SDIFF -> GPT-OSS 직접 생성 엔드포인트
 @app.post("/gptoss/generate_from_sdiff")
 async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
     """
     [CRITICAL FIX 17]
-    - SDIFF 힌트 정제 로직은 유지합니다.
-    - _sanitize_structured_diff_semantics가 'endpoints'와 'detected_...' 힌트를 제거하도록 호출합니다.
-    - [CHANGED] Top-1 예제 코드 주입을 '완전히 제거'하고,
-      _safe_invoke... 함수에 '정적 템플릿'을 사용하도록 위임합니다.
-      
-    [BUG FIX] "Empty Code" 에러 해결:
-              `vl_sdiff_qwen`이 생성한 SDIFF를 파싱하여,
-              `notes.raw_text_cleaned_answer` (VLM 논리)는 '보존'하되,
-              '데이터 중복' 원인인 `green_measures_refined.[*].vlm_refinement.group_id` 키만 '삭제'합니다.
-              
-    [BUG FIX] (Concern 2) 'gptoss_gen_sdiff.raw_qwen.txt' 로깅이 누락된 버그 수정.
-    
-    [PLAN J FIX] "Empty Code" (Data Missing) 문제 해결:
-    - [FIXED] `pop("raw_text")` 및 `_sanitize_structured_diff_semantics` 호출을
-              '완전히 제거'하여 모든 논리/데이터 힌트가 GPT-OSS로 전달되도록 수정.
-    - [KEPT] "Two-Message" 전략을 위해 'Top-1 코드 전체'를 로드하여 전달.
-    - [KEPT] "Empty Code"가 계속될 경우를 대비하여, Top-1 코드의 길이를
-             강제로 자를 수 있는 `MAX_FEWSHOT_LEN` 테스트 코드를 (주석 처리된 상태로) 유지.
+    ...
+    [NEW PLAN (User Idea)]
+    - [FIXED] System 프롬프트(규칙)를 Message 3로 이동하여 토큰 한계 문제 해결.
+    - [FIXED] '스마트 슬리밍' 로직을 '완전히 제거'하고 '전체' Few-shot 코드를 전송.
+    - [MODIFIED] payload에서 'model_name'을 읽어 invoker로 전달 (gptoss or gausso)
     """
     try:
-        import json, os
+        import json, os, re
         from pathlib import Path
-        # import ast # (더 이상 사용되지 않음)
 
         image_name = payload.get("image_name")
         structured_diff_text = payload.get("structured_diff_text", "") # 원본 V6 SDIFF (JSON 문자열)
+       
+        # [MODIFIED] 모델 이름 수신 (기본값: gptoss)
+        model_name = payload.get("model_name", "gptoss")
 
         if not image_name or not structured_diff_text:
             return JSONResponse({"ok": False, "error": "image_name and structured_diff_text required"}, status_code=200)
@@ -3824,16 +3960,16 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 log.warning(f"Failed to create brightness map for GPT-OSS: {e}")
 
         # --- 2. [FIXED] SDIFF 정제 로직 '완전 제거' ---
-        # `vl_sdiff_qwen`이 생성한 V6 SDIFF를 그대로 사용합니다.
         structured_diff_full_text = structured_diff_text
         original_raw_text_for_logging = structured_diff_text # V6 SDIFF를 로깅
-        
+       
         # --- 3. [REMOVED] `_sanitize_structured_diff_semantics` 호출 제거 ---
-        
+       
         # --- 4. Top-1 Few-shot '전체 코드' 로드 (Slimming 없음) ---
         top_1_code_str = "" # 기본값: 빈 문자열
         sels = []
         try:
+            # [FIXED] 오타 수정 (topk)
             sels = _select_topk_fewshots_for(image_name, k=1)
             if sels:
                 best_dir = Path(sels[0]["_dir"])
@@ -3848,28 +3984,20 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 log.warning("[GPT-OSS Prep] No Top-1 few-shot found. AI will generate code without a structural reference.")
         except Exception as e:
             log.warning(f"[GPT-OSS Prep] Top-1 few-shot load failed: {e}")
-        # --- [FIXED] 끝 ---
-        
-        # --- [RE-ADDED] 4.5 입력 길이 테스트 (Hypothesis Test) ---
-        # (Empty Code가 계속되면 이 코드의 주석을 해제하고 1000 등으로 값을 낮춰 테스트)
-        # ---------------------------------------------------
-        # MAX_FEWSHOT_LEN = 4000 # (예: 4000자)
-        # if len(top_1_code_str) > MAX_FEWSHOT_LEN:
-        #     log.warning(f"[GPT-OSS Prep] LENGTH TEST: Truncating Top-1 code from {len(top_1_code_str)} to {MAX_FEWSHOT_LEN} chars.")
-        #     top_1_code_str = top_1_code_str[:MAX_FEWSHOT_LEN]
-        # ---------------------------------------------------
-
-
+       
+        # --- [DELETED] 4.5 "스마트 슬리밍" 로직 전체 삭제 ---
+       
         # --- 5. SDIFF + MASK METADATA 결합 (이것이 guide_text_with_sdiff가 됨) ---
         full_prompt_list = []
         full_prompt_list.append("Generate a Python script based on the [STRUCTURED_DIFF] hint below.")
         full_prompt_list.append("Your code MUST import and use functions from `meta_utils`.")
-        
-        # [FIXED] 'V6 SDIFF' (NLP 힌트 포함)를 전달
+       
+        # 원본 SDIFF 텍스트 추가 (로깅 시에만 예쁘게)
         full_prompt_list.append(structured_diff_full_text)  
 
         if meta_sum:
             try:
+                # 메타데이터 JSON 생성 (기존에도 indent=2 였음)
                 meta_json_str = json.dumps(meta_sum, ensure_ascii=False, indent=2)
                 full_prompt_list.append("\n\n### MASK METATADATAv(Data/Hints for Algorithm)\n")
                 full_prompt_list.append(meta_json_str)
@@ -3877,49 +4005,70 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 log.warning(f"Failed to serialize Meta Summary for prompt: {e}")
 
         full_prompt = "\n".join(full_prompt_list)
-        
-        # --- 6. 로깅 ---
+       
+        # --- 6. 로깅 [MODIFIED] (로그 가독성 문제 해결) ---
         if os.getenv("DEBUG_GPTOSS_PROMPT", "1") == "1":
             try:
                 debug_path = (RUN_DIR / stem / "gptoss_gen_sdiff.debug.txt")
                 debug_content = []
-                debug_content.append(f"[gptoss_generate_from_sdiff log @ {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
-                
-                # [FIXED] full_prompt는 이제 'V6 SDIFF'를 포함
+                debug_content.append(f"[gptoss_generate_from_sdiff log ({model_name}) @ {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
+               
                 debug_content.append("--- 1. [FULL V6] SDIFF Hint + MASK METADATA ---\n")
-                debug_content.append(full_prompt)
-                
-                debug_content.append(f"\n\n--- 2. [FULL/TRUNCATED] Reference Code (Top-1 Few-Shot) --- (ID: {sels[0]['id'] if sels else 'N/A'})\n")
+               
+                # [MODIFIED] full_prompt를 로깅하되, JSON 부분은 예쁘게 변환 시도
+                try:
+                    # SDIFF V6 텍스트를 파싱
+                    sdiff_dict = json.loads(structured_diff_full_text)
+                    pretty_sdiff = json.dumps(sdiff_dict, ensure_ascii=False, indent=2)
+                    # 메타데이터도 예쁘게
+                    pretty_meta = json.dumps(meta_sum, ensure_ascii=False, indent=2) if meta_sum else "(No Meta)"
+                   
+                    # 로그에 예쁜 버전 추가
+                    debug_content.append("Generate a Python script based on the [STRUCTURED_DIFF] hint below.\n")
+                    debug_content.append("Your code MUST import and use functions from `meta_utils`.\n")
+                    debug_content.append(pretty_sdiff) # <-- Pretty
+                    debug_content.append("\n\n### MASK METATADATAv(Data/Hints for Algorithm)\n")
+                    debug_content.append(pretty_meta) # <-- Pretty
+                except Exception:
+                    debug_content.append(full_prompt) # 파싱 실패 시 원본
+               
+                # [MODIFIED] '전체' 코드를 로깅 (단, 너무 길면 자름)
+                debug_content.append(f"\n\n--- 2. [FULL] Reference Code (Top-1 Few-Shot) --- (ID: {sels[0]['id'] if sels else 'N/A'})\n")
                 if top_1_code_str:
-                    # 디버그 로그에는 전체 코드를 쓰면 너무 길어지므로, 요약본(혹은 잘라서) 로깅
-                    if len(top_1_code_str) > 2000:
-                        debug_content.append(top_1_code_str[:2000] + "\n...[TRUNCATED IN LOG]")
+                    # 로그 파일이 너무 커지는 것을 방지
+                    if len(top_1_code_str) > 4000:
+                         debug_content.append(top_1_code_str[:4000] + "\n...[TRUNCATED IN LOG]")
                     else:
-                        debug_content.append(top_1_code_str)
+                         debug_content.append(top_1_code_str)
                 else:
                     debug_content.append("(Top-1 code not found or failed to load)")
-                
-                # [FIX] 디버그 파일은 여기서 '덮어쓰기' (w)로 저장
+               
+                # debug.txt 덮어쓰기
                 debug_path.write_text("\n".join(debug_content), encoding="utf-8")
-                
-                # 원본 Qwen raw_text (질문+답변)를 별도 파일에 로깅
-                # [FIX] 'original_raw_text_for_logging'이 V6 SDIFF 자체를 가리키도록 수정
+               
+                # [MODIFIED] raw_qwen.txt 로깅 (Pretty-Print)
                 debug_path_raw_qwen = (RUN_DIR / stem / "gptoss_gen_sdiff.raw_qwen.txt")
-                debug_path_raw_qwen.write_text(original_raw_text_for_logging or "(raw_text not found)", encoding="utf-8")
-                
+                try:
+                    sdiff_dict_raw = json.loads(original_raw_text_for_logging)
+                    pretty_sdiff_raw = json.dumps(sdiff_dict_raw, ensure_ascii=False, indent=2)
+                    debug_path_raw_qwen.write_text(pretty_sdiff_raw, encoding="utf-8")
+                except Exception:
+                    # 파싱 실패 시 원본 텍스트 저장
+                    debug_path_raw_qwen.write_text(original_raw_text_for_logging or "(raw_text not found)", encoding="utf-8")
+               
             except Exception as e:
                 log.warning(f"[gptoss_generate_sdiff] debug log failed: {e}")
 
-        # --- 7. 전용 Invoker 호출 (위 1번 함수) ---
-        # [FIXED] '전체' Top-1 코드와 'stem'을 전달
-        code = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt, top_1_code_str, stem).strip()
+        # --- 7. 전용 Invoker 호출 [MODIFIED] ---
+        # [MODIFIED] '전체' top_1_code_str 및 'model_name' 전달
+        code = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt, top_1_code_str, model_name, stem).strip()
         code = _strip_code_fence(code)
 
-        # (이하 로깅 및 반환은 동일)
+        # --- 8. 로깅 (Invoker 호출 후) ---
         if os.getenv("DEBUG_GPTOSS_PROMPT", "1") == "1":
             _dump_debug(
                 stem,
-                "gptoss_gen_sdiff.debug.txt", 
+                "gptoss_gen_sdiff.debug.txt",
                 "\n--- 3. Model Output (Head) ---\n" + (code[:4000] if code else "(empty)") + "\n"
             )
 
@@ -3927,6 +4076,7 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
             # [THIS IS THE ERROR]
             return JSONResponse({"ok": False, "error": "LLM returned empty code."}, status_code=200)
 
+        # --- 9. 재시도 로직 (Violation) [MODIFIED] ---
         violation = _reject_merge_copying(code)
         if violation:
             feedback = (
@@ -3936,21 +4086,21 @@ async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
                 "- Use the correct 'class_val' from MASK METADATA and SDIFF HINTS.\n"
             )
             full_prompt_2 = full_prompt + "\n\n[FEEDBACK]\n" + feedback + "\n"
-            # [FIXED] '전체' Top-1 코드와 'stem'을 전달
-            code2 = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt_2, top_1_code_str, stem).strip()
+           
+            # [MODIFIED] 재시도 시에도 '전체' top_1_code_str 및 'model_name' 전달
+            code2 = _safe_invoke_gptoss_for_code_from_sdiff(full_prompt_2, top_1_code_str, model_name, stem).strip()
             code2 = _strip_code_fence(code2)
 
             if code2.strip():
                 violation2 = _reject_merge_copying(code2)
                 if not violation2:
                     code = code2
-            
+           
         return JSONResponse({"ok": True, "code": code})
     except Exception as e:
         log.exception("[gptoss/generate_from_sdiff] failed")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=200)
-
-   
+    
 @app.post("/gptoss/generate")
 async def gptoss_generate(payload: dict = Body(...)):
     """
@@ -4440,8 +4590,7 @@ if __name__ == "__main__":
     log.info(f"GEMMA_BASE_URL set? {bool(GEMMA_BASE_URL)}  MODEL={GEMMA_MODEL}")
     log.info(f"LLAMA4_BASE_URL set? {bool(LLAMA4_BASE_URL)} MODEL={LLAMA4_MODEL}")
     log.info(f"GPTOSS_BASE_URL set? {bool(GPTOSS_BASE_URL)} MODEL={GPTOSS_MODEL}")
+    log.info(f"GAUSSO_BASE_URL set? {bool(GAUSSO_BASE_URL)} MODEL={GAUSSO_MODEL}")
     log.info(f"QWEN_ENABLE={QWEN_ENABLE} MODEL_ID={QWEN_MODEL_ID} DEVICE={QWEN_DEVICE} DTYPE={QWEN_DTYPE}")
     uvicorn.run(app, host="0.0.0.0", port=port)
 
-
-    

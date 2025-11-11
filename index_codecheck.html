@@ -496,9 +496,12 @@
 
     function setSelected(name){
       CURRENT=name; PptId = PptId || null;
+      
+      // [MODIFIED] SDIFF 상태를 먼저 초기화합니다.
       LAST_SDIFF = null;
-      structuredBox.textContent = '{ }';
-      refreshStructuredDiffState();
+      structuredBox.textContent = '{ /* SDIFF 캐시 로드 중... */ }';
+      refreshStructuredDiffState(); // 버튼 비활성화
+
       selName.textContent=`파일: ${name}`;
       const mergeURL = `/get_image/${encodeURIComponent(name)}`;
       imgMerge.src = mergeURL; imgMerge.style.display='block'; noMerge.style.display='none';
@@ -516,6 +519,28 @@
       btnRun.disabled=false; btnSave.disabled=false; btnRevert.disabled=false; btnAssistSend.disabled=false;
 
       highlightSelected();
+
+      // [NEW] 디스크에 저장된 SDIFF 캐시를 불러옵니다.
+      fetch(`/sdiff/get_latest?image_name=${encodeURIComponent(name)}`)
+        .then(r => r.json())
+        .then(d => {
+          if (d.ok && d.structured_diff) {
+            LAST_SDIFF = d.structured_diff;
+            structuredBox.textContent = JSON.stringify(d.structured_diff, null, 2);
+            refreshStructuredDiffState(); // 버튼 활성화
+          } else {
+            // 캐시 없음 (정상)
+            LAST_SDIFF = null;
+            structuredBox.textContent = '{ /* 캐시된 SDIFF 없음. [Qwen으로 SDIFF 생성]을 실행하세요. */ }';
+            refreshStructuredDiffState(); // 버튼 비활성화
+          }
+        })
+        .catch(e => {
+          console.error("Failed to fetch SDIFF cache", e);
+          LAST_SDIFF = null;
+          structuredBox.textContent = `{ /* SDIFF 캐시 로드 실패: ${e.message} */ }`;
+          refreshStructuredDiffState(); // 버튼 비활성화
+        });
 
       // [CHANGED] 미완료 파일이면 코드 박스 비움 유지
       const meta = getSelectedMeta(name);
