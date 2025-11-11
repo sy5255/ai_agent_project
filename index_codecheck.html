@@ -198,6 +198,7 @@
           <div class="row" style="margin-bottom:6px">
             <button id="btnGenCode" class="btn">GPT-OSS로 코드 생성</button>
             <button id="btnGenCodeDirect" class="btn" disabled>QWEN3-&gt;GPT-OSS 코드 생성</button>
+<button id="btnGenCodeDirectGauss" class="btn" disabled>QWEN3-&gt;GaussO-Think 코드 생성</button>
             <button id="btnLoadTop1Code" class="btn">Top-1 few-shot 코드 불러오기</button> <!-- [NEW] -->
             <span class="pill" id="codeGenHint">VL 지시 프롬프트 + (Top-1) few-shot 텍스트 기반 전체 스크립트 생성 → <b>완료 즉시 자동 실행</b><br/>또는 Qwen SDIFF만으로 GPT-OSS 코드를 바로 받아 실행할 수 있습니다.</span> <!-- [CHANGED] -->
           </div>
@@ -288,7 +289,9 @@
     // GPT-OSS
     const btnGenCode=$('btnGenCode');
     const btnGenCodeDirect=$('btnGenCodeDirect');
-    const btnLoadTop1Code=$('btnLoadTop1Code'); // [NEW]
+    
+// [NEW] GaussO-Think SDIFF direct-generate button
+const btnGenCodeDirectGauss = $('btnGenCodeDirectGauss');const btnLoadTop1Code=$('btnLoadTop1Code'); // [NEW]
     const assistInput=$('assistInput'), btnAssistSend=$('btnAssistSend'), assistLog=$('assistLog');
 
     // collapsible
@@ -312,6 +315,7 @@
       const hasSDiff = (redLines + greenLines) > 0;
       if(btnGenCodeDirect){
         btnGenCodeDirect.disabled = !hasSDiff;
+  if (typeof btnGenCodeDirectGauss !== 'undefined' && btnGenCodeDirectGauss) btnGenCodeDirectGauss.disabled = !hasSDiff;
       }
     }
 
@@ -890,3 +894,61 @@
   </script>
 </body>
 </html>
+
+<script>
+// [FALLBACK] Attach GaussO-Think handler (couldn't find the GPT-OSS handler block)
+(function(){
+  var btn = document.getElementById('btnGenCodeDirectGauss');
+  if(!btn) return;
+  btn.addEventListener('click', async function(){
+    try {
+      if (typeof CURRENT === 'undefined' || !CURRENT) { alert('파일을 먼저 선택하세요.'); return; }
+      if (typeof LAST_SDIFF === 'undefined' || !LAST_SDIFF) { alert('먼저 Qwen으로 STRUCTURED_DIFF를 생성하세요.'); return; }
+      var sdiff_json_string = JSON.stringify(LAST_SDIFF);
+      if(!sdiff_json_string.trim()){ alert('STRUCTURED_DIFF 정보가 비어 있습니다.'); return; }
+
+      try { if (typeof codeStart === 'function') codeStart(); } catch(e){}
+      try { 
+        var p = document.getElementById('codeProgress'); 
+        if (p) p.style.display='block';
+        var l = document.getElementById('codeProgressLabel'); 
+        if (l) l.textContent='10% · SDIFF 기반 코드 생성 중…';
+        var log = document.getElementById('logBox'); 
+        if (log){ log.style.display='block'; log.textContent='GaussO-Think(SDIFF) 코드 생성 중...'; }
+        btn.disabled = true;
+      } catch(e){}
+
+      var payload = { image_name: CURRENT, structured_diff_text: sdiff_json_string, model_name: "gausso" };
+      var res = await fetch('/gptoss/generate_from_sdiff', {
+        method: 'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      var data = await res.json();
+      if (data.ok && data.code && data.code.trim()) {
+        var ta = document.getElementById('taCode');
+        if (ta) ta.value = data.code;
+        var log = document.getElementById('logBox'); 
+        if (log) log.textContent = '코드가 생성되었습니다.' + (typeof runMeasure==='function' ? ' 자동으로 실행합니다...' : '');
+        var l = document.getElementById('codeProgressLabel'); 
+        if (l) l.textContent = (typeof runMeasure==='function') ? '실행 준비 중…' : '완료';
+        if (typeof runMeasure === 'function') await runMeasure(true);
+      } else {
+        var log = document.getElementById('logBox'); 
+        if (log) log.textContent = '코드 생성 실패: ' + (data.error||'');
+        var l = document.getElementById('codeProgressLabel'); 
+        if (l) l.textContent = '실패';
+        try { if (typeof codeFail === 'function') codeFail(); } catch(e){}
+      }
+    } catch(e) {
+      var log = document.getElementById('logBox'); 
+      if (log) log.textContent = '요청 실패: ' + e;
+      var l = document.getElementById('codeProgressLabel'); 
+      if (l) l.textContent = '실패';
+      try { if (typeof codeFail === 'function') codeFail(); } catch(_e){}
+    } finally {
+      try { if (typeof refreshStructuredDiffState === 'function') refreshStructuredDiffState(); } catch(_e){}
+    }
+  });
+})();
+</script>
+

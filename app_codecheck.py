@@ -97,6 +97,7 @@ GAUSSO_X_DEP_TICKET = os.getenv("GAUSSO_X_DEP_TICKET", "12345")
 GAUSSO_SEND_SYSTEM_NAME = os.getenv("GAUSSO_SEND_SYSTEM", "AutoMeasure")
 GAUSSO_USER_ID   = os.getenv("GAUSSO_USER_ID", "ss") 
 GAUSSO_USER_TYPE = os.getenv("GAUSSO_USER_TYPE", "ss") 
+
 # 최대 이미지 수 제한 (OpenAI 호환: 5장)
 MAX_IMAGES_PER_PROMPT = 5
 
@@ -1482,7 +1483,7 @@ def _build_gausso():
             "Completion-Msg-Id": str(uuid.uuid4()),
         },
         temperature=0.1,
-        max_tokens=8192, # [FIXED] 8192로 설정
+        max_tokens=24576, # [FIXED] 8192로 설정
         timeout=1000,      # [FIXED] 600초(10분)로 설정
         max_retries=1,
     )
@@ -3213,6 +3214,7 @@ def _reject_merge_copying(code: str) -> str | None:
             return f"Forbidden pattern detected: {pat}"
     return None
 
+
 # [REPLACE] _upgrade_sdiff_to_lite 함수
 def _upgrade_sdiff_to_lite(sdiff: dict | None) -> dict | None:
     """
@@ -4593,4 +4595,3 @@ if __name__ == "__main__":
     log.info(f"GAUSSO_BASE_URL set? {bool(GAUSSO_BASE_URL)} MODEL={GAUSSO_MODEL}")
     log.info(f"QWEN_ENABLE={QWEN_ENABLE} MODEL_ID={QWEN_MODEL_ID} DEVICE={QWEN_DEVICE} DTYPE={QWEN_DTYPE}")
     uvicorn.run(app, host="0.0.0.0", port=port)
-
