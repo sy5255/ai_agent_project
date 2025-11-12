@@ -2388,7 +2388,6 @@ async def vl_describe4(
         return JSONResponse({"ok": False, "error": str(e)}, status_code=200)
 
 # [기존 app_codecheck.py 파일 내용 중 vl_continue4 함수 부분만 찾아서 교체]
-
 @app.post("/vl/continue4")
 async def vl_continue4(
     vl_model: str = Form("llama4"),
@@ -3681,7 +3680,7 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
     auto_log = []
     auto_fixed = False
     if auto_fix:
-        llm = _build_gptoss()
+        llm = _build_gausso() # 모델 변경 _build_gptoss() 
         auto_log.append({"attempt": 0, "returncode": rc, "stdout": stdout, "stderr": stderr})
         for i in range(1, max_fixes+1):
             _set_status(stem, phase="fix", attempt=i, progress=10+int(80*(i/(max_fixes+1))), label=f"에러 {i} 해결 중")
