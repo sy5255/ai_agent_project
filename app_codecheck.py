@@ -97,7 +97,6 @@ GAUSSO_X_DEP_TICKET = os.getenv("GAUSSO_X_DEP_TICKET", "12345")
 GAUSSO_SEND_SYSTEM_NAME = os.getenv("GAUSSO_SEND_SYSTEM", "AutoMeasure")
 GAUSSO_USER_ID   = os.getenv("GAUSSO_USER_ID", "ss") 
 GAUSSO_USER_TYPE = os.getenv("GAUSSO_USER_TYPE", "ss") 
-
 # 최대 이미지 수 제한 (OpenAI 호환: 5장)
 MAX_IMAGES_PER_PROMPT = 5
 
@@ -199,7 +198,9 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
 7. **(클래스 매핑)** `main`에서 전달받은 `classes` 리스트(예: `[10, 30, 50]`)를 사용하여, SDIFF 힌트의 **'의미론적'** 설명(예: 'darkest')을 **'정확한'** 클래스 값으로 **'직접'** 매핑해야 한다.
    - **'darkest'** (가장 어두운) == **`classes[0]`** (예: `10`)
    - **'brightest'** (가장 밝은) == **`classes[-1]`** (예: `50`)
-8. **(힌트 타입 분기)** `final_class_hint_start`가 `"red_1"` (문자열 ID)이면 (AI가 생성한) `project_point_onto_line`을, `10` (숫자)이면 (AI가 생성한) `max_point_in_class` 등을 호출하는 **분기 로직**을 정확히 구현하라.
+8. **(힌트 타입 분기)** final_class_hint_start (또는 final_class_hint_end) 힌트의 '타입'에 따라 다음 로직을 분기하라:
+    a. (문자열 ID) 힌트가 "red_1" 같은 문자열 ID이면, 이는 '시작/끝'점이 해당 ID의 '가이드라인'에 있음을 의미한다. (예: project_point_onto_line 호출)
+    b. (숫자 클래스) 힌트가 10 같은 숫자이면, 이는 '시작/끝'점이 해당 숫자 클래스 마스크 자체의 경계(Contour) 또는 특정 지점(예: 최대/최소점)임을 의미한다. (예: cv2.findContours 또는 np.nonzero 로직 사용)
 
 ## [매우 중요] 출력 및 환경 규칙 (필수 준수):
 
@@ -208,18 +209,74 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
 3. **(템플릿 준수)** [Reference Code]의 `main()` 함수, `argparse` 로직을 **'최대한'** 준수하라.
 4. **(CSV 헤더)** `measurements.csv` 파일 저장 시, **'반드시'** 다음 표준 헤더 리스트를 사용해야 한다: `CSV_HEADERS = {CSV_HEADERS_LIST_STR}`
 5. **(Import 금지)** `measurement_utils`라는 파일은 존재하지 않는다. **'절대'** `import measurement_utils`를 시도하지 마라.
-6. **(meta_utils 규칙)** `import meta_utils`는 '필수'이다. `load_pixel_scale_um` 함수는 `(umx, umy, classes_list, meta_path_str)` 4개의 값을 반환한다고 **'반드시'** 가정해야 한다.
+6. **(meta_utils 규칙)** `import meta_utils`는 '필수'이다. `__wrap_load_pixel_scale_um` 함수를 **'반드시'** 호출해야 하며, 이 함수는 `(umx, umy, classes_list, meta_path_str)` 4개의 값을 반환한다.
 7. **(인자 금지)** [Reference Code]에 `mask_merge_path` 인자가 있더라도, '절대' `argparse`에 추가하지 마라.
 """
+
+# === 추가: generation_config 상태 캡처/로그 유틸 ===
+def _capture_gen_state(model):
+    try:
+        gc = getattr(model, "generation_config", None)
+        if gc is None:
+            return {"has_generation_config": False}
+        return {
+            "has_generation_config": True,
+            "do_sample": getattr(gc, "do_sample", None),
+            "num_beams": getattr(gc, "num_beams", None),
+            "temperature": getattr(gc, "temperature", None),
+            "top_p": getattr(gc, "top_p", None),
+            "top_k": getattr(gc, "top_k", None),
+            "repetition_penalty": getattr(gc, "repetition_penalty", None),
+            "eos_token_id": getattr(gc, "eos_token_id", None),
+            "pad_token_id": getattr(gc, "pad_token_id", None),
+        }
+    except Exception as e:
+        try:
+            log.warning(f"[QWEN] capture gen state failed: {e}")
+        except Exception:
+            pass
+        return {"has_generation_config": False, "error": str(e)}
+
+def _maybe_log_gen_state(model, where=""):
+    import os
+    # 환경변수 QWEN_DEBUG_GEN=1 일 때만 상세 로그
+    if os.environ.get("QWEN_DEBUG_GEN", "0") != "1":
+        return
+    st = _capture_gen_state(model)
+    log.info(f"[QWEN] generation_config @ {where}: {st}")
+
+# === 필요하면 터미널에서 호출할 수 있는 프린트 헬퍼 ===
+def qwen_print_gen_state():
+    global _qwen_pipe
+    try:
+        if not _qwen_pipe:
+            print("Qwen pipe is empty (load first).")
+            return
+        processor, model, is_mm, meta = _qwen_pipe
+        st = _capture_gen_state(model)
+        print("=== Qwen generation_config ===")
+        for k, v in st.items():
+            print(f"{k:20s}: {v}")
+        print("\n=== Loader meta ===")
+        print(meta)
+    except Exception as e:
+        print("print failed:", e)
 
 def _lazy_load_qwen() -> bool:
     """
     Qwen3-VL / Qwen2-VL 멀티모달 로더 (GPU 우선, bf16/fp16, flash-attn 가능시 자동 사용).
     - 모델은 HF 캐시를 사용하므로 최초 1회 이후엔 로딩 로그만 보이고 빠르게 재사용됨.
     - 어떤 오류가 나도 예외 올리지 않고 False만 반환(상위에서 원문 그대로 사용하도록).
+    - ※ 이 로더는 generation_config를 변경하지 않음 (조회/로그만 함)
     """
     global _qwen_loaded, _qwen_pipe
     if _qwen_loaded:
+        # 이미 로드된 경우에도 상태를 보고 싶으면 QWEN_DEBUG_GEN=1로 확인 가능
+        try:
+            if _qwen_pipe and len(_qwen_pipe) >= 2:
+                _maybe_log_gen_state(_qwen_pipe[1], where="already_loaded")
+        except Exception:
+            pass
         return _qwen_pipe is not None
     try:
         if QWEN_ENABLE != "1":
@@ -271,6 +328,9 @@ def _lazy_load_qwen() -> bool:
                     attn_implementation=attn_impl,
                     low_cpu_mem_usage=True,
                 )
+                # 상태 캡처/로그만
+                meta["gen_state"] = _capture_gen_state(model)
+                _maybe_log_gen_state(model, where="ImageTextToText")
                 _qwen_pipe = (processor, model, True, meta)
                 _qwen_loaded = True
                 log.info("[QWEN] loaded (ImageTextToText, multimodal).")
@@ -289,6 +349,8 @@ def _lazy_load_qwen() -> bool:
                     attn_implementation=attn_impl,
                     low_cpu_mem_usage=True,
                 )
+                meta["gen_state"] = _capture_gen_state(model)
+                _maybe_log_gen_state(model, where="Vision2Seq")
                 _qwen_pipe = (processor, model, True, meta)
                 _qwen_loaded = True
                 log.info("[QWEN] loaded (Vision2Seq, multimodal).")
@@ -305,6 +367,8 @@ def _lazy_load_qwen() -> bool:
             attn_implementation=attn_impl,
             low_cpu_mem_usage=True,
         )
+        meta["gen_state"] = _capture_gen_state(model)
+        _maybe_log_gen_state(model, where="CausalLM")
         _qwen_pipe = (processor, model, False, meta)
         _qwen_loaded = True
         log.info("[QWEN] loaded (CausalLM, text-only).")
@@ -315,6 +379,7 @@ def _lazy_load_qwen() -> bool:
         _qwen_loaded = True
         _qwen_pipe = None
         return False
+
     
 def _lazy_load_dino() -> bool:
     """
@@ -1994,7 +2059,7 @@ def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribb
 
             gen_kwargs = dict(max_new_tokens=2048)
             with torch.no_grad():
-                out = model.generate(**inputs, **gen_kwargs)
+                out = model.generate(**inputs, **gen_kwargs, do_sample=True)
 
             # (이하 디코딩 및 파싱 로직)
             if hasattr(processor, "batch_decode"):
@@ -2388,6 +2453,7 @@ async def vl_describe4(
         return JSONResponse({"ok": False, "error": str(e)}, status_code=200)
 
 # [기존 app_codecheck.py 파일 내용 중 vl_continue4 함수 부분만 찾아서 교체]
+
 @app.post("/vl/continue4")
 async def vl_continue4(
     vl_model: str = Form("llama4"),
@@ -3153,7 +3219,7 @@ def _gptoss_prompt_for_fix(current_code: str, error_text: str) -> str:
         "에러 메시지의 원인을 분석하고, 전체 스크립트를 수정하여 재출력해 주세요.\n"
         "- 기존 기능은 절대 깨지면 안 됩니다.\n"
         "- overlay.png와 measurements.csv를 out_dir에 출력해야 합니다.\n"
-        "- meta_utils.load_pixel_scale_um(mask_path, meta_root)는 (umx,umy,classes,meta_path) 4개 값 반환 사용\n"
+        "- meta_utils.__wrap_load_pixel_scale_um(mask_path, meta_root)는 (umx,umy,classes,meta_path) 4개 값 반환 사용\n"
         "- 절대 마크다운 코드펜스 없이 순수 파이썬 코드만 출력\n\n"
         "=== 현재 코드 ===\n"
         f"{current_code}\n\n"
@@ -3177,7 +3243,6 @@ def _load_pil_resized_keep_scale(p: Path, max_side: int):
         sx, sy = (1.0, 1.0)
     pil = PIL.Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
     return pil, (sx, sy)
-
 
 def _rescale_endpoints_to_original(endpoints, scale_xy):
     """[[x1,y1],[x2,y2]]를 원본 좌표로 역스케일. scale_xy=(sx,sy)는 축소비율(<=1)."""
@@ -3480,7 +3545,7 @@ async def code_run(payload: dict = Body(...)):
     measure_py.write_text(code_text, encoding="utf-8")
 
     # --- [CHANGED] meta_utils.py 및 measurement_utils.py 복사 로직 강화 ---
-    
+   
     # 1. meta_utils.py 복사 (기존 로직 유지)
     meta_utils_dest = run_dir / "meta_utils.py"
     candidates_meta = []
@@ -3488,7 +3553,7 @@ async def code_run(payload: dict = Body(...)):
     if envp_meta: candidates_meta.append(Path(envp_meta))
     candidates_meta += [BASE_DIR/"meta_utils.py", Path(IMAGE_DIR).parent/"meta_utils.py", Path.cwd()/"meta_utils.py"]
     picked_meta = next((c for c in candidates_meta if c.exists() and c.is_file()), None)
-    
+   
     if picked_meta:
         meta_utils_dest.write_text(picked_meta.read_text(encoding="utf-8"), encoding="utf-8")
         txt = meta_utils_dest.read_text(encoding="utf-8")
@@ -3543,7 +3608,7 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
     utils_dest = run_dir / "measurement_utils.py"
     candidates_utils = []
     # (MEASUREMENT_UTILS_PATH 전역 변수를 직접 참조하는 대신, 환경변수와 후보 경로를 탐색)
-    envp_utils = os.getenv("MEASUREMENT_UTILS_PATH") 
+    envp_utils = os.getenv("MEASUREMENT_UTILS_PATH")
     if envp_utils: candidates_utils.append(Path(envp_utils))
     candidates_utils += [
         BASE_DIR / "measurement_utils.py", # app_codecheck.py와 동일 경로
@@ -3565,9 +3630,9 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
     if overlay_path.exists():
         try: overlay_path.unlink()
         except Exception: pass
-    
+   
     stem = Path(_normalize_name(image_name)).stem
-    
+   
     # ... (SDIFF JSON 생성 로직은 기존과 동일)
     try:
         sdiff_path = mask_merge_path.with_suffix(".json")
@@ -3614,7 +3679,7 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
                             "merge_name": mask_merge_path.name
                         }
                     }
-            
+           
             try:
                 sdiff.setdefault("notes", {})
                 sdiff["notes"]["_server_injected"] = True
@@ -3646,9 +3711,9 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
             return 124, "", f"Timeout: {e}"
         except Exception as e:
             return 125, "", f"Exec failed: {e}"
-            
+           
     _set_status(stem, phase="exec", attempt=0, progress=10, label="실행 중…")
-    
+   
     rc, stdout, stderr = _exec_once()
 
     try:
@@ -3680,7 +3745,25 @@ def __wrap_load_pixel_scale_um(mask_path: str, meta_root: str):
     auto_log = []
     auto_fixed = False
     if auto_fix:
-        llm = _build_gausso() # 모델 변경 _build_gptoss() 
+        # --- [NEW] Auto-Fix Debug Logging ---
+        # 자동 수정 루프에 들어가기 직전에, 실패한 원본 코드와 에러를 별도 파일에 기록합니다.
+        try:
+            failing_code = measure_py.read_text(encoding="utf-8", errors="ignore")
+            debug_content = (
+                f"--- [AUTO-FIX TRIGGERED] {datetime.datetime.now().isoformat()} ---\n"
+                f"[Image]: {image_name}\n"
+                f"[Returncode]: {rc}\n\n"
+                f"--- [STDERR] ---\n{stderr or '(empty)'}\n\n"
+                f"--- [STDOUT] ---\n{stdout or '(empty)'}\n\n"
+                f"--- [FAILING CODE] ---\n{failing_code}\n\n"
+            )
+            # _dump_debug는 app_codecheck.py에 이미 존재합니다.
+            _dump_debug(stem, "gptoss_autofix.debug.txt", debug_content)
+        except Exception as e_dbg:
+            log.warning(f"[code_run] Failed to write auto-fix debug log: {e_dbg}")
+        # --- [NEW] End ---
+
+        llm = _build_gausso() # 모델 변경 _build_gptoss()
         auto_log.append({"attempt": 0, "returncode": rc, "stdout": stdout, "stderr": stderr})
         for i in range(1, max_fixes+1):
             _set_status(stem, phase="fix", attempt=i, progress=10+int(80*(i/(max_fixes+1))), label=f"에러 {i} 해결 중")
