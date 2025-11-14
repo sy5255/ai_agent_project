@@ -176,8 +176,7 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
 
 1.  **(우선순위)** 너의 **'유일한 진실'**은 [New Logic Hint (SDIFF)]의 '논리적 의도' (예: `coordinate_system`, `construction_logic_hint`, `lcs_orientation_intent`)이다.
 2.  **(충돌 시 무시)** 만약 SDIFF의 '논리'가 [Reference Code]의 '구현' (예: `anchors_from_class10_top_peaks`, `max_point_in_interval_for_class` 함수 로직)과 **충돌**한다면, 너는 **'반드시' [Reference Code]의 구현을 '무시'**하고 SDIFF의 '논리'를 **'새로 구현'**해야 한다.
-3.  **(예시 1: Green Line 위치)** SDIFF가 "6 independent lines"와 "v_placement_logic_hint_end: Find max-y point"를 요구하는데, [Reference Code]가 "U-groove intervals"과 "max_point_in_interval_for_class" 로직을 사용한다면, 너는 **'반드시'** "intervals" 로직을 **'버리고'**, SDIFF의 "max-y point" 자연어 알고리즘을 구현하는 **'새로운' 헬퍼 함수**를 작성해야 한다.
-4.  **(예시 2: 좌표계)** [Reference Code]가 `dir_u`, `dir_n`을 사용하더라도, 너는 SDIFF의 `coordinate_system` 힌트를 기반으로 `v_axis`, `v_normal`, `local_to_world` 함수를 **'새로 정의'**하고 사용해야 한다.
+3.  **(예시 1: 좌표계)** [Reference Code]가 `dir_u`, `dir_n`을 사용하더라도, 너는 SDIFF의 `coordinate_system` 힌트를 기반으로 `v_axis`, `v_normal`, `local_to_world` 함수를 **'새로 정의'**하고 사용해야 한다.
 
 ## [매우 중요] 좌표계 (Coordinate System) 규칙 (필수 준수)
 
@@ -233,6 +232,27 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
 8. **(힌트 타입 분기)** final_class_hint_start (또는 final_class_hint_end) 힌트의 '타입'에 따라 다음 로직을 분기하라:
     a. (문자열 ID) 힌트가 "red_1" 같은 문자열 ID이면, 이는 '시작/끝'점이 해당 ID의 '가이드라인'에 있음을 의미한다. (예: project_point_onto_line 호출)
     b. (숫자 클래스) 힌트가 10 같은 숫자이면, 이는 '시작/끝'점이 해당 숫자 클래스 마스크 자체의 경계(Contour) 임을 의미한다. (예: cv2.findContours 또는 np.nonzero 로직 사용)
+9.  **(신규: 템플릿 매칭 강제)** SDIFF 최상위 키 `grounding_template_global.template_filename` (예: "grounding_template.png")이 존재하는지 '반드시' 확인하라. 만약 이 키가 존재한다면:
+    a. 너는 `u_placement...`, `v_placement...` 같은 자연어 힌트를 **보조용**으로만 참고하고, **템플릿 매칭 로직을 '최우선'**으로 생성해야 한다.
+    b. **[패딩 변수화]** 코드 상단에 **4개의 전역 상수**를 '반드시' 정의한다. (이 값은 `argparse`가 아니다.)
+        (예: `ROI_PAD_TOP = 20`, `ROI_PAD_BOTTOM = 80`, `ROI_PAD_LEFT = 20`, `ROI_PAD_RIGHT = 20`)
+    c. `main` 함수에서 `template_filename`을 **`args.out_dir` (실행 폴더)**에서 로드한다.
+        (예: `template_path = os.path.join(args.out_dir, sdiff_template_filename)`)
+    d. `template_img = cv2.imread(template_path, 0)`로 템플릿을 로드하고, `None`이 아닌지 확인한다.
+    e. `cv2.matchTemplate(new_mask_image, template_img, cv2.TM_CCOEFF_NORMED)`를 실행하여 `maxLoc` (새로운 `rect_global`의 원점)을 찾는다.
+    f. `green.lines`를 루프로 순회하며 `line.relative_roi` (SDIFF에 저장된 작은 ROI)를 가져온다.
+    g. **[패딩 적용]** 이 `relative_roi`에 `ROI_PAD_TOP`, `ROI_PAD_BOTTOM` 등 4개의 패딩 상수를 **더하여** `padded_relative_roi`를 계산하는 헬퍼 함수(예: `def apply_padding(roi, top, bottom, left, right)`)를 '정의'하고 '호출'한다.
+    h. `maxLoc` 원점에 `padded_relative_roi` 좌표를 더하여, `green_1`, `green_2` 등의 **'최종 타겟 ROI'** (절대 좌표)를 계산한다.
+    i. **[검색 영역]** `find_top_point`, `find_bottom_point` 등 모든 측정 헬퍼 함수는 **오직 이 '최종 타겟 ROI' 내부에서만** `final_class_hint_start`와 `final_class_hint_end` (예: 10, 30, 50)를 찾아야 한다. (LCS 로직과 결합되어야 함)
+    j. **[디버그 이미지]** `main` 함수 끝 `overlay.png` 저장 직전에, **'roi_debug.png'**라는 새 파일을 `out_dir`에 '반드시' 저장해야 한다.
+    k. **[디버그 상세]** `roi_debug.png`는 원본 `mask_path`를 컬러로 변환한 배경 위에, `green.lines` 루프에서 계산된 **'최종 타겟 ROI'** (패딩이 적용된) 박스 6개를 **각각 다른 색상**과 `line.id` 텍스트로 그려야 한다.
+    l. (검색 영역 오류 방지) `grounding_template`이 없다면, 'i'항목의 로직을 `red.lines[0].grounded_rois` (DINO ROI) 영역 내에서 수행해야 한다.
+
+10. **(신규: LCS 그리기 강제)** `coordinate_system.type`이 **'local'**일 때, **'절대'** 절대 좌표(ACS)에서 찾은 `(sx, sy)`와 또 다른 절대 좌표 `(ex, ey)`를 `cv2.line`으로 직접 연결하지 마라. 너는 **'반드시'** SDIFF의 '좌표계 규칙 5.g'와 '6.a'를 따라야 한다:
+    a. `(u_start, v_start)`와 `(u_end, v_end)`라는 **'로컬(u,v) 좌표'** 4개를 먼저 계산한다.
+    b. `local_to_world` 함수를 **'두 번'** 호출하여 `(sx, sy)`와 `(ex, ey)`라는 **'최종 절대 좌표'**를 얻는다.
+    c. 이 두 점 `(sx, sy)`와 `(ex, ey)`를 `cv2.line`으로 연결한다.
+    d. (예: 이 SDIFF에서 `u_end`가 `null`이므로, 너는 `(u_start, v_start)`와 `(u_start, v_end)`를 변환해야 한다.)
 
 ## [매우 중요] 출력 및 환경 규칙 (필수 준수):
 
@@ -483,6 +503,138 @@ def _lazy_load_dino() -> bool:
         log.exception("[DINO] load failed: %s", e)
         _dino_pipe = None
         return False
+    
+def _encode_template_to_b64(template_img: np.ndarray) -> str:
+    """Encodes a numpy array (image) to a base64 string for SDIFF."""
+    try:
+        is_success, buffer = cv2.imencode(".png", template_img, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+        if not is_success:
+            raise RuntimeError("cv2.imencode failed")
+        return base64.b64encode(buffer.tobytes()).decode("utf-8")
+    except Exception as e:
+        log.error(f"Failed to encode template to b64: {e}")
+        return ""
+    
+def _calculate_template_rois(
+    mask_path: Path,
+    red_lines: List[Dict],
+    green_lines: List[Dict],
+    global_padding: int = 20,
+    padding: Dict[str, int] = {}  # [MODIFIED] Use a dictionary for asymmetrical padding
+) -> Tuple[Optional[np.ndarray], Optional[List[int]], Dict[str, List[int]]]:
+    """
+    Calculates the global template image (as numpy array), and finds relative green line ROIs.
+   
+    [MODIFIED] Returns:
+        (template_img_obj, global_rect [x,y,w,h], relative_rois_map { "green_1": [x,y,w,h], ... })
+    """
+    if not green_lines and not red_lines:
+        return None, None, {}
+   
+    mask_img = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+    if mask_img is None:
+        log.warning(f"[Template] Mask not found at {mask_path}, cannot create template.")
+        return None, None, {}
+       
+    img_h, img_w = mask_img.shape[:2]
+
+    def _get_rect(line):
+        # Handles both v1 (x1,y1) and v2 (endpoints) format
+        ep = line.get("endpoints")
+        if ep and len(ep) >= 4:
+            x1, y1, x2, y2 = ep[0], ep[1], ep[2], ep[3]
+        elif "x1" in line and "y1" in line and "x2" in line and "y2" in line:
+            x1, y1, x2, y2 = line.get("x1"), line.get("y1"), line.get("x2"), line.get("y2")
+        else:
+            return None
+           
+        if any(v is None for v in [x1, y1, x2, y2]):
+            return None
+        # [FIX] w, h가 0이 되지 않도록 최소 1 보장
+        x = min(x1, x2)
+        y = min(y1, y2)
+        w = max(1, abs(x2 - x1))
+        h = max(1, abs(y2 - y1))
+        return [int(x), int(y), int(w), int(h)]
+
+    all_points_x = []
+    all_points_y = []
+   
+    for line in red_lines + green_lines:
+        ep = line.get("endpoints")
+        if ep and len(ep) >= 4:
+            all_points_x.extend([ep[0], ep[2]])
+            all_points_y.extend([ep[1], ep[3]])
+        elif "x1" in line:
+             all_points_x.extend([line["x1"], line["x2"]])
+             all_points_y.extend([line["y1"], line["y2"]])
+
+    if not all_points_x:
+        log.warning("[Template] No coordinates found in scribble lines.")
+        return None, None, {}
+
+    # 1. Calculate Global Rect
+    min_x = max(0, min(all_points_x) - global_padding)
+    max_x = min(img_w, max(all_points_x) + global_padding)
+    min_y = max(0, min(all_points_y) - global_padding)
+    max_y = min(img_h, max(all_points_y) + global_padding)
+   
+    gx, gy = int(min_x), int(min_y)
+    gw = int(max_x - min_x)
+    gh = int(max_y - min_y)
+   
+    if gw <= 0 or gh <= 0:
+        log.warning("[Template] Invalid global rect dimensions.")
+        return None, None, {}
+       
+    global_rect = [gx, gy, gw, gh]
+
+    # 2. Create template image object
+    template_img_obj = None
+    try:
+        template_img_obj = mask_img[gy:gy+gh, gx:gx+gw]
+    except Exception as e:
+        log.error(f"[Template] Failed to create template image object: {e}")
+        return None, None, {}
+       
+    # 3. Calculate relative ROIs for green lines
+    relative_rois_map = {}
+   
+    # [NEW] Get individual padding values
+    pad_top = padding.get("top", 0)
+    pad_bottom = padding.get("bottom", 0)
+    pad_left = padding.get("left", 0)
+    pad_right = padding.get("right", 0)
+   
+    for line in green_lines:
+        line_id = line.get("id")
+        if not line_id:
+            continue
+       
+        rect = _get_rect(line)
+        if not rect:
+            continue
+           
+        rx, ry, rw, rh = rect
+       
+        # [MODIFIED] Apply asymmetrical padding (which is now a small, fixed debug padding)
+        rx_pad = max(0, rx - pad_left)
+        ry_pad = max(0, ry - pad_top)
+        rw_pad = rw + pad_left + pad_right
+        rh_pad = rh + pad_top + pad_bottom
+       
+        # Calculate relative coordinates
+        rel_x = max(0, rx_pad - gx)
+        rel_y = max(0, ry_pad - gy)
+       
+        # Clip width/height to be within the global template
+        rel_w = min(rw_pad, gx + gw - rel_x)
+        rel_h = min(rh_pad, gy + gh - rel_y)
+
+        if rel_w > 0 and rel_h > 0:
+            relative_rois_map[line_id] = [int(rel_x), int(rel_y), int(rel_w), int(rel_h)]
+
+    return template_img_obj, global_rect, relative_rois_map
 
 # -----------------------------
 # 유틸 (기존 유지)
@@ -2885,6 +3037,13 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
     - [FIXED] 5.4.2 힌트맵 생성을 4-Hint (u/v_placement_...) 키를 '읽도록' 수정
     - [FIXED] 5.7 '데이터' (Green Lines) 빌드 시 4-Hint (u/v_placement_...) 키를 '쓰도록' 수정
     - [REMOVED] 5.7에서 'construction_method_start/end' 키 삭제
+
+    [USER REQUEST: TEMPLATE MATCHING V7 - Splitting Padding]
+    - [NEW] 5.2.5 (호출부) `LINE_PADDING_FOR_DEBUG` (작은 고정값)을 정의하고 `_calculate_template_rois`에 전달.
+    - [NEW] 5.2.6 템플릿 이미지를 'run_dir'에 PNG 파일로 저장 (예: 'grounding_template.png').
+    - [FIXED] 5.3 SDIFF 최상위에 B64 대신 `template_filename` (문자열)과 `source_rect`를 1개만 저장.
+    - [FIXED] 5.7 Green Line에 `template_b64`를 제거하고 `relative_roi` (작은 패딩이 적용된 좌표)만 주입.
+    - [MODIFIED] 5.8.5 `grounding_template_debug.png` 생성 시 SDIFF에 저장된 '작은 패딩' `relative_roi`를 사용.
     """
     try:
         name = (data or {}).get("image_name")
@@ -2892,6 +3051,10 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
             return JSONResponse({"ok": False, "error": "image_name required"})
            
         stem = Path(_normalize_name(name)).stem
+       
+        # --- [NEW] 템플릿/SDIFF를 저장할 'run_dir'를 미리 정의 ---
+        run_dir = _run_dir_for(name); _ensure_dir(run_dir)
+        # --- [NEW] END ---
        
         merge_path = (IMAGE_DIR / name).resolve()
 
@@ -3061,9 +3224,10 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
                    
                     # 2. [REMOVED] Green ROIs 그리기 로직 삭제
                    
-                    debug_dir = (RUN_DIR / stem)
-                    debug_dir.mkdir(parents=True, exist_ok=True)
-                    debug_save_path = debug_dir / "dino_debug.png"
+                    # [FIX] run_dir는 이미 정의되어 있음
+                    # debug_dir = (RUN_DIR / stem)
+                    # debug_dir.mkdir(parents=True, exist_ok=True)
+                    debug_save_path = run_dir / "dino_debug.png"
                     cv2.imwrite(str(debug_save_path), debug_img)
                     log.info(f"Saved DINO debug image (Red ROIs Only) to: {debug_save_path}") # [MODIFIED]
                 else:
@@ -3087,6 +3251,51 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
             qwen_json_dict = {} # Fallback
 
         # 5.2 [REMOVED] 'group_id' 외과적 제거 로직 삭제 (anchor_logic_hint로 대체)
+
+        # --- [NEW] 5.2.5 템플릿 및 상대 ROI 계산 ---
+        template_img_obj = None
+        template_global_rect = None
+        template_relative_rois = {}
+       
+        # [NEW] 비대칭 패딩 값 정의 (아이디어 1)
+        # (C50 픽셀이 아래에 있으므로 'bottom' 패딩을 크게 줍니다.)
+        LINE_PADDING_FOR_DEBUG = {
+            "top": 10,
+            "bottom": 10,
+            "left": 10,
+            "right": 10
+        }
+       
+        if mask_path:
+            try:
+                log.info("[Template] Calculating template and relative ROIs with DEBUG padding...")
+                # [FIX] _calculate_template_rois가 (img_obj, rect, map) 3개를 반환
+                template_img_obj, template_global_rect, template_relative_rois = _calculate_template_rois(
+                    mask_path,
+                    sdiff_v1_merged.get("red_lines_detail", []),
+                    sdiff_v1_merged.get("green_lines_detail", []),
+                    global_padding=20,
+                    padding=LINE_PADDING_FOR_DEBUG # [MODIFIED] 작은 고정 패딩 전달
+                )
+                if template_img_obj is not None:
+                     log.info(f"[Template] Success. Created template image ({template_img_obj.shape}) and {len(template_relative_rois)} relative ROIs.")
+                else:
+                    log.warning("[Template] _calculate_template_rois returned empty template.")
+            except Exception as e_template:
+                log.error(f"[Template] Failed to calculate template ROIs: {e_template}")
+       
+        # --- [NEW] 5.2.6 템플릿 이미지를 'run_dir'에 파일로 저장 ---
+        template_filename_str = None
+        if template_img_obj is not None:
+            try:
+                template_filename_str = "grounding_template.png"
+                template_save_path = run_dir / template_filename_str
+                cv2.imwrite(str(template_save_path), template_img_obj)
+                log.info(f"[Template] Saved template image to {template_save_path}")
+            except Exception as e_save_tpl:
+                log.error(f"[Template] Failed to save template PNG to disk: {e_save_tpl}")
+                template_filename_str = None # 저장 실패 시 null
+        # --- [NEW] END ---
        
         # --- [NEW] 5.3 V6 SDIFF 뼈대 생성 (LCS 힌트 추가) ---
         qwen_coord_answer = qwen_json_dict.get("coordinate_system", {})
@@ -3110,6 +3319,14 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
         sdiff_final = {
             "schema": "scribble_vlite_v2",
             "coordinate_system": final_coord_system, # <-- [NEW] LCS 힌트 주입
+           
+            # --- [NEW] SDIFF 최상위에 템플릿 1개 저장 ---
+            "grounding_template_global": {
+                "source_rect": template_global_rect,     # [x,y,w,h]
+                "template_filename": template_filename_str # "grounding_template.png" (or None)
+            },
+            # --- [NEW] END ---
+           
             "rules": sdiff_v1_refined.get("rules", {"green_on_red": True, "nudge_if_touching": True}),
             "red":   {"count": 0, "lines": []},
             "green": {"count": 0, "lines": []},
@@ -3226,6 +3443,10 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
             if not isinstance(ln, dict): continue
             line_id = ln.get("id")
            
+            # [NEW] Get template info for this line_id
+            # (template_relative_rois 맵은 이미 '작은 고정 패딩'이 적용된 ROI를 가지고 있음)
+            relative_roi_for_this_line = template_relative_rois.get(line_id) # [x,y,w,h] or None
+           
             sdiff_final["green"]["lines"].append({
                 # --- (기존 CV 힌트 보존) ---
                 "id": line_id,
@@ -3246,7 +3467,10 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
                 "v_placement_logic_hint_end": green_v_placement_end_map.get(line_id, ""),
                
                 # --- [REMOVED] Green Line DINO ROI 삭제 ---
-                "grounded_rois": None
+                "grounded_rois": None,
+
+                # --- [NEW] Grounding Template (relative_roi) 주입 ---
+                "relative_roi": relative_roi_for_this_line
             })
 
         # 5.8 최종 카운트
@@ -3255,8 +3479,51 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
 
         log.info(f"Successfully built V6 SDIFF: {sdiff_final['red']['count']} red, {sdiff_final['green']['count']} green.")
        
+        # --- [NEW] 5.8.5 ROI 디버그 이미지 생성 (아이디어 2) ---
+        if template_img_obj is not None and template_relative_rois:
+            try:
+                # 3채널 컬러로 변환
+                debug_img = cv2.cvtColor(template_img_obj, cv2.COLOR_GRAY2BGR)
+               
+                # 6개의 고유 색상 (BGR)
+                colors = [
+                    (255, 0, 0),   # Blue
+                    (0, 255, 0),   # Green
+                    (0, 0, 255),   # Red
+                    (255, 255, 0), # Cyan
+                    (255, 0, 255), # Magenta
+                    (0, 255, 255)  # Yellow
+                ]
+               
+                # SDIFF에 저장된 순서대로 순회
+                for i, line_data in enumerate(sdiff_final["green"]["lines"]):
+                    line_id = line_data.get("id")
+                    # [FIX] SDIFF에 저장된 '작은 고정 패딩'이 적용된 ROI를 가져옴
+                    rel_roi = line_data.get("relative_roi") # [x,y,w,h]
+                   
+                    if not line_id or not rel_roi:
+                        continue
+                       
+                    color = colors[i % len(colors)]
+                    x, y, w, h = rel_roi
+                    p1 = (int(x), int(y))
+                    p2 = (int(x + w), int(y + h))
+                   
+                    cv2.rectangle(debug_img, p1, p2, color, 2)
+                    cv2.putText(debug_img, line_id, (p1[0], p1[1] - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+                debug_save_path = run_dir / "grounding_template_debug.png"
+                cv2.imwrite(str(debug_save_path), debug_img)
+                log.info(f"[Template] Saved ROI debug image to {debug_save_path}")
+
+            except Exception as e_dbg_img:
+                log.error(f"[Template] Failed to create debug ROI image: {e_dbg_img}")
+        # --- [NEW] END ---
+       
         try:
-            run_dir = _run_dir_for(name); _ensure_dir(run_dir)
+            # [FIX] run_dir는 이미 정의되어 있음
+            # run_dir = _run_dir_for(name); _ensure_dir(run_dir)
             sdiff_path = run_dir / "sdiff_qwen_v6.json"
             sdiff_path.write_text(json.dumps(sdiff_final, ensure_ascii=False, indent=2), encoding="utf-8")
             log.info(f"Persisted V6 SDIFF to {sdiff_path}")
@@ -3481,7 +3748,6 @@ def _reject_merge_copying(code: str) -> str | None:
         if re.search(pat, code):
             return f"Forbidden pattern detected: {pat}"
     return None
-
 
 # [REPLACE] _upgrade_sdiff_to_lite 함수
 def _upgrade_sdiff_to_lite(sdiff: dict | None) -> dict | None:
