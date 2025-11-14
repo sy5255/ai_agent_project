@@ -176,7 +176,7 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
 
 1.  **(우선순위)** 너의 **'유일한 진실'**은 [New Logic Hint (SDIFF)]의 '논리적 의도' (예: `coordinate_system`, `construction_logic_hint`, `lcs_orientation_intent`)이다.
 2.  **(충돌 시 무시)** 만약 SDIFF의 '논리'가 [Reference Code]의 '구현' (예: `anchors_from_class10_top_peaks`, `max_point_in_interval_for_class` 함수 로직)과 **충돌**한다면, 너는 **'반드시' [Reference Code]의 구현을 '무시'**하고 SDIFF의 '논리'를 **'새로 구현'**해야 한다.
-3.  **(예시 1: Green Line 위치)** SDIFF가 "6 independent lines"와 "construction_method_end: Find max-y point"를 요구하는데, [Reference Code]가 "U-groove intervals"과 "max_point_in_interval_for_class" 로직을 사용한다면, 너는 **'반드시'** "intervals" 로직을 **'버리고'**, SDIFF의 "max-y point" 자연어 알고리즘을 구현하는 **'새로운' 헬퍼 함수**를 작성해야 한다.
+3.  **(예시 1: Green Line 위치)** SDIFF가 "6 independent lines"와 "v_placement_logic_hint_end: Find max-y point"를 요구하는데, [Reference Code]가 "U-groove intervals"과 "max_point_in_interval_for_class" 로직을 사용한다면, 너는 **'반드시'** "intervals" 로직을 **'버리고'**, SDIFF의 "max-y point" 자연어 알고리즘을 구현하는 **'새로운' 헬퍼 함수**를 작성해야 한다.
 4.  **(예시 2: 좌표계)** [Reference Code]가 `dir_u`, `dir_n`을 사용하더라도, 너는 SDIFF의 `coordinate_system` 힌트를 기반으로 `v_axis`, `v_normal`, `local_to_world` 함수를 **'새로 정의'**하고 사용해야 한다.
 
 ## [매우 중요] 좌표계 (Coordinate System) 규칙 (필수 준수)
@@ -196,12 +196,15 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
     c. `cv2.line`을 그릴 때, 이 '위치'에 `v_axis` (parallel) 또는 `v_normal` (perpendicular) 벡터를 기반으로 **'재정의된'** 선분을 그린다.
 5.  **(LCS 구현 - Phase 3: 측정선 계산 [Natural Language])**
     a. `green.lines`를 루프로 순회한다.
-    b. **[Algorithm Hint]** `green_1`의 `construction_method_start` (예: "Projected... onto... red line")와 `construction_method_end` (예: "Find the point on the 'end_class' contour that is *farthest* along the normal vector") 힌트를 읽는다.
+    b. **[Algorithm Hint]** `green_1`의 4-Hint, 즉 `u_placement_logic_hint_start`, `u_placement_logic_hint_end`, `v_placement_logic_hint_start`, `v_placement_logic_hint_end`에 명시된 **'자연어 알고리즘'**을 읽는다.
     c. `red_1.grounded_rois` (예: `ROI_Red`) 힌트를 가져와 `roi_mask`를 생성한다. (이 힌트가 없다면 `roi_mask`는 전체 마스크가 된다.)
-    d. **[Implementation]** 너는 이 **'자연어 알고리즘 힌트(b)'**를 **'그대로 구현'**하는 헬퍼 함수(예: `def find_farthest_point_on_contour(mask_roi, class_val, normal_vector, start_point)`)를 **'새로 생성(def)'**해야 한다.
-    e. 이 함수는 `mask_roi` 내부에서 `final_class_hint_end` (예: 30)에 해당하는 *모든* 픽셀을 찾고, `start_point`에서 `normal_vector` 방향으로 투영하여 '가장 먼' 점의 좌표(`end_point`)를 찾아야 한다.
-    f. `start_point`도 `construction_method_start` 힌트(예: "Projected...")와 `v_axis` (주축)를 기반으로 **'새로 계산'**해야 한다. (절대 [Reference Code]의 `top_points_roi`를 사용하지 마라.)
-    g. `start_point`와 `end_point`가 '로컬' 좌표이면 `local_to_world`로 변환한다. (만약 `find_farthest_point...`가 이미 '절대' 좌표를 반환했다면 변환은 불필요하다.)
+    d. **[Implementation]** 너는 이 **'자연어 알고리즘 힌트(b)'**를 **'그대로 구현'**하는 헬퍼 함수 4개(또는 1~2개의 복합 함수)를 **'새로 생성(def)'**해야 한다.
+        - (예: `def get_u_coord(mask_roi, class_val, hint_text)` -> `u_start` 반환)
+        - (예: `def get_v_coord_start(origin, v_axis, ...)` -> `v_start` 반환)
+        - (예: `def get_v_coord_end(mask_roi, class_val, u_start, v_normal, ...)` -> `v_end` 반환)
+    e. 이 함수는 `roi_mask` 내부에서 `final_class_hint_end` (예: 30)에 해당하는 *모든* 픽셀을 찾고, `v_normal` (법선) 방향으로 투영하여 mask 외곽선 위의 점을 잡는 측정 로직을 구현해야한다.
+    f. `u_start` 좌표 역시 `u_placement_logic_hint_start` 힌트(예: "centroid of 1st finger")를 기반으로 **'새로 계산'**해야 한다. (절대 [Reference Code]의 `top_points_roi`를 사용하지 마라.)
+    g. 계산된 로컬 좌표 `(u_start, v_start)`와 `(u_end, v_end)`를 `local_to_world`로 변환한다. (만약 `u_end`가 `null`이면 `u_start`를 사용한다.)
 6.  **(LCS 구현 - Phase 4: 최종 변환 및 저장)**
     a. 계산된 최종 **'절대 좌표 (sx, sy, ex, ey)'**를 `cv2.line`으로 그리고 `measurements.csv`에 저장한다.
 
@@ -223,7 +226,7 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
 4. **(그룹핑 논리)** SDIFF의 `notes.grouping_logic.description`에 'pair' 힌트가 있는지 확인하라.
    a. 이 경우, 너는 [Reference Code]의 '반복' 구조(예: `zip`)가 SDIFF의 '논리'('3 pairs')와 **'모순'**된다는 것을 인지해야 한다.
    b. 너는 **'반드시'** `Top-1` 코드의 `zip` 구조를 **'무시'**하고, SDIFF의 '논리'를 따르는 **'새로운 반복문'** (예: `itertools.groupby` 또는 x좌표 정렬 후 2개씩 묶기)을 **'새로 구현'**해야 한다.
-6. **(헬퍼 함수 생성/수정)** `measure_logic`에 필요한 **'모든'** 헬퍼 함수 (예: `fit_red_line`, `project_point_onto_line`, `find_max_y_point`)를 [Reference Code]의 구조를 참고하여 **'새로 생성(def)하거나 수정'**해야 한다.
+6. **(헬퍼 함수 생성/수정)** `measure_logic`에 필요한 **'모든'** 헬퍼 함수 (예: `fit_red_line`, `project_point_onto_line` 등)를 [Reference Code]의 구조를 참고하여 **'새로 생성(def)하거나 수정'**해야 한다.
 7. **(클래스 매핑)** `main`에서 전달받은 `classes` 리스트(예: `[10, 30, 50]`)를 사용하여, SDIFF 힌트의 **'의미론적'** 설명(예: 'darkest')을 **'정확한'** 클래스 값으로 **'직접'** 매핑해야 한다.
    - **'darkest'** (가장 어두운) == **`classes[0]`** (예: `10`)
    - **'brightest'** (가장 밝은) == **`classes[-1]`** (예: `50`)
@@ -1803,10 +1806,10 @@ def _safe_invoke_gptoss_for_code(guide_text: str, fewshot_texts: List[str]) -> s
 # 이 구조는 Qwen에게 "무엇을 채워야 하는지" 알려주는 '틀'입니다.
 def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: List[str]) -> str:
     """
-    ... (기존 주석) ...
-             
+    [CHANGED] 3개 이미지 + CV SDIFF 힌트 + '밝기 서술자'를 Qwen-VL에 전달합니다.
+   
     [LCS PLAN - STEP 1]
-    - [NEW] "coordinate_system" 블록 추가 (1. VLM의 '의도' 선언)
+    - [NEW] "coordinate_system" 블록 추가 (1. VLM'의 '의도' 선언)
     - [NEW] "lcs_orientation_intent" 키 추가 (2. VLM의 '의도' 선언)
    
     [ANCHORING PLAN - STEP 1]
@@ -1827,6 +1830,17 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
     [FINAL PLAN - STEP 1 (Correction)]
     - [MODIFIED] 'construction_method_end'의 'e.g.' (예시)에서 "farthest"를 제거하여
                   Qwen이 스스로 알고리즘을 추론하도록 '개방형 질문'으로 수정.
+                 
+    [USER REQUEST: 4-HINT (U/V) STRUCTURE]
+    - [REPLACED] 'construction_method_start' and 'construction_method_end'
+    - [NEW] Added 'u_placement_logic_hint_start', 'u_placement_logic_hint_end',
+    - [NEW] 'v_placement_logic_hint_start', 'v_placement_logic_hint_end'
+   
+    [USER REQUEST: OVERFITTING-PROOF (v5 - Grouping Logic)]
+    - [MODIFIED] Re-implemented the user's original, long, general-purpose prompts.
+    - [REMOVED] All hardcoded hints like 'red_1' or 'fingers' from the prompt text.
+    - [MODIFIED] `grouping_logic.description` to be general and ask for patterns,
+      removed "6 independent lines" hint.
     """
     import json
    
@@ -1836,12 +1850,14 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
     json_prompt_structure_obj = {
         "analysis_summary": "One-sentence summary of the measurement task.",
        
+        # --- [MODIFIED] Grouping Logic Prompt ---
         "grouping_logic": {
-            "description": "Are GREEN measures grouped (e.g., '3 intervals, 2 lines per interval') or 6 'independent' lines?",
-            "interval_definition": "If grouped by 'intervals', what defines the interval? (e.g., 'Between the 4 red anchor points', 'U-grooves')",
+            "description": "CRITICAL (Grouping): Do the green measurement items (lines) appear to repeat in a similar, structured way, or is each line completely unique and independent? (e.g., 'Repeats: 2 lines per structural unit', 'Independent: each line has a unique logic')",
+            "interval_definition": "If they repeat or are grouped, what geometric structure defines the group or interval? (e.g., 'Grouped by the 'darkest' finger structures', 'Grouped by grooves')",
             "geometric_relationship": "CRITICAL: What is the geometric relationship between red and green lines? (e.g., 'Green lines are perpendicular/normal to the red line', 'Green lines are all vertical')",
             "direction_relative_to_red": "CRITICAL: In which direction do the green lines point *relative to the red line*? (e.g., 'downwards', 'upwards', 'towards the bottom of the image')"
         },
+        # --- [MODIFIED] END ---
        
         "coordinate_system": {
             "type": "What is the coordinate system type? Choose one: ['absolute', 'local']",
@@ -1896,18 +1912,22 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
                     "detected_class_hint_end": cv_end_hint_val
                 },
                 "vlm_refinement": {
-                    # --- [REMOVED] 앵커 논리 삭제 ---
-                    # --- [REMOVED] Green Line DINO 프롬프트 삭제 ---
-                   
                     # --- (기존 로직) ---
                     "start_is_connected_to_red_guide": "CRITICAL: Does the start point visually connect to *any* red guide line? (true/false)",
                     "end_is_connected_to_red_guide": "CRITICAL: Does the end point visually connect to *any* red guide line? (true/false)",
                     "connected_red_guide_id_start": "If 'start_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
                     "connected_red_guide_id_end": "If 'end_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
                    
-                    # --- [MODIFIED] 알고리즘 힌트 (개방형 질문) ---
-                    "construction_method_start": "CRITICAL (Detailed): How should the START point be calculated? (e.g., 'Projected perpendicularly onto the connected red line', 'Find centroid of start_class', 'Find max-y point of start_class')",
-                    "construction_method_end": "CRITICAL (Detailed): How should the END point be calculated? (Analyze the image and describe the algorithm) (e.g., 'Find max-y point of end_class', 'Find centroid of end_class')",
+                    # --- [MODIFIED] "4-Hint" (U/V) - 사용자님의 '길고 구체적인' 프롬프트로 복원 ---
+                    "u_placement_logic_hint_start": "Use the existing GREEN line only as a visual hint. First, infer which mask or scribble structure this line is aligned with horizontally (for example, 'top peak of a darkest finger', 'centerline of a class-30 ridge', or 'x-position of a finger inside ROI_Red'). Then describe a pixel-level algorithm that could place a NEW measurement line at the same U-position using only the mask, the red guide line, and ROI information, without assuming the green line already exists.",
+
+                    "u_placement_logic_hint_end": "Using the visible GREEN line only as a clue, decide whether the END U-coordinate should differ from the START U-coordinate. If it differs, infer which structure determines the END U (for example, a different finger or ridge) and give a pixel-level algorithm to compute that END U from the mask in (u, v) space. If the END U is intended to reuse the same u-strip as START, explicitly return null and clearly state that the same U-range is used.",
+
+                    "v_placement_logic_hint_start": "Treat the visible GREEN line as a hint for where the measurement starts, but explain how to reconstruct that START point from scratch. Specify which object defines v = 0 (typically the red guide line used as the u-axis), then give exact steps to: (1) choose the anchor point on the finger or structure, (2) convert it to (u, v) coordinates using the red guide line as the u-axis, and (3) if needed, project it onto the red guide line so that the START point lies exactly on that guide line.",
+
+                    "v_placement_logic_hint_end": "Treat the END of the GREEN line as the final measurement result and infer which class or structure its END point lies on (for example, the bottom-most pixel of the target class inside the same u-strip as START). Then describe a step-by-step local-coordinate algorithm: convert all candidate pixels of the target class to (u, v), filter them by the u-strip around START, and select the pixel with the appropriate v (usually the maximum v in the downward direction). If the END is intended to coincide with START, explicitly return null.",
+                    # --- [MODIFIED] END ---
+                                    
                     "lcs_orientation_intent": "CRITICAL: What is this line's orientation *relative to the local grid*? Choose one: ['parallel_to_primary', 'perpendicular_to_primary', 'unrelated']"
                 }
             })
@@ -1916,6 +1936,7 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
 
     # 3. 직렬화
     return json.dumps(json_prompt_structure_obj, indent=2)
+
 
 def _sample_class_at_line_end(
     mask_img: np.ndarray,
@@ -2050,9 +2071,18 @@ def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribb
 
             content = []
             prompt_parts = []
-            
-            prompt_parts.append("You are an expert vision analyst. Analyze the provided images:")
-            
+           
+            # [USER REQUEST] "Algorithm Inference" 글로벌 규칙 추가
+            prompt_parts.append(
+                "You are an expert vision analyst.\n"
+                "In the scribble image, RED and GREEN lines are already drawn by a human.\n"
+                "Treat each GREEN line as a label showing the result of a measurement.\n"
+                "Your job is to infer the underlying geometric rule and pixel-level algorithm that could have produced a similar line from scratch using only the mask image, the red guide, and ROI hints.\n"
+                "You may look at the existing GREEN line as a visual hint, but your final explanation MUST NOT depend on “knowing the green line in advance”; it must be an algorithm that could recreate that line even if the green scribble were removed.\n\n"
+                "Now, analyze the provided images:"
+            )
+            # [USER REQUEST] END
+           
             img_idx_counter = 0
             if pil_mask:
                 content.append({"type": "image"})
@@ -2068,14 +2098,14 @@ def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribb
                 img_idx_counter += 1
 
             # [PROMPT] "CV 힌트가 틀릴 수 있다"고 명확히 지시
-            prompt_parts.append("\nAnalyze the 'Scribble' in context of the 'Mask'.")
-            prompt_parts.append("Your task is to **VERIFY or CORRECT** the `cv_hint` for each line.")
+            # (기존 "Analyze the 'Scribble'..."는 글로벌 규칙으로 대체되었으므로 제거)
+            prompt_parts.append("\nYour first task is to **VERIFY or CORRECT** the `cv_hint` for each line.")
             prompt_parts.append("The `cv_hint` (e.g., 50) is just a guess based on location and **IS LIKELY WRONG**.")
             prompt_parts.append("Use your visual reasoning (e.g., 'the red guide *looks like* it's fitting the 'darkest' fingers') to determine the *true* classes needed.")
             prompt_parts.append(f"You MUST use the 'brightness descriptors' from this list: {json.dumps(brightness_descriptors)}")
             prompt_parts.append("Fill in the 'vlm_refinement' sections based on your reasoning.")
             prompt_parts.append("Provide your analysis STRICTLY in the following JSON format. Do NOT add any other text, explanations, or 'thinking' steps.")
-            
+           
             prompt_parts.append(json_prompt_structure)
             # --- [PROMPT CHANGE END] ---
 
@@ -2109,14 +2139,17 @@ def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribb
                     return_tensors="pt"
                 ).to(dev)
 
-            gen_kwargs = dict(max_new_tokens=2048)
+            # --- [SOLUTION] Increase max_new_tokens ---
+            gen_kwargs = dict(max_new_tokens=8192) # 2048 -> 8192
+            # --------------------------------------------
+           
             with torch.no_grad():
                 out = model.generate(**inputs, **gen_kwargs, do_sample=True)
 
             # (이하 디코딩 및 파싱 로직)
             if hasattr(processor, "batch_decode"):
                 raw_text = processor.batch_decode(out, skip_special_tokens=True)[0]
-                
+               
                 if raw_text.strip().startswith(prompt_string.strip()):
                      raw_text = raw_text.strip()[len(prompt_string.strip()):].strip()
                 elif "ASSISTANT:" in raw_text:
@@ -2130,7 +2163,7 @@ def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribb
                     m = re.search(r"\{.*\}", raw_text, re.DOTALL)
                     if m:
                         raw_text = m.group(0)
-                        
+                       
                 _log_qwen_raw(mask_path, raw_text)
             else:
                 tok = getattr(processor, "tokenizer", None)
@@ -2138,7 +2171,7 @@ def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribb
         else:
             raw_text = "{\"error\": \"Qwen not available\"}"
     except Exception as e:
-        log.exception(f"[QWEN] call failed: {e}")
+        log.exception(f"[QVEN] call failed: {e}")
         raw_text = f"(Qwen call failed: {e})"
 
     sdiff["notes"]["raw_text"] = (raw_text or "")
@@ -2272,7 +2305,6 @@ def _build_llm_for(model: str):
             temperature=0.2, max_tokens=4096, timeout=240, max_retries=1,
         )
 
-# [REPLACE] _vl_prompt_blocks 함수
 # [REPLACE] _vl_prompt_blocks 함수
 def _vl_prompt_blocks(mask_path: Path, merge_path: Path, scribble_path: Optional[Path], ppt_path: Optional[Path], user_text: str, structured: Dict, fewshot_texts: List[str], meta_summary: Dict):
     """ 
@@ -2505,6 +2537,7 @@ async def vl_describe4(
         return JSONResponse({"ok": False, "error": str(e)}, status_code=200)
 
 # [기존 app_codecheck.py 파일 내용 중 vl_continue4 함수 부분만 찾아서 교체]
+
 @app.post("/vl/continue4")
 async def vl_continue4(
     vl_model: str = Form("llama4"),
@@ -2847,6 +2880,11 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
     - [NEW] 5.4.2 'construction_method_start/end' (Green) 맵 생성 로직 추가
     - [REMOVED] 5.5 'group_id_vlm' 번역 로직 삭제
     - [NEW] 5.7 '데이터' (Green Lines) 빌드 시 'construction_method_start/end' 주입 및 'grounded_rois' 삭제
+   
+    [USER REQUEST: 4-HINT (U/V) FIX]
+    - [FIXED] 5.4.2 힌트맵 생성을 4-Hint (u/v_placement_...) 키를 '읽도록' 수정
+    - [FIXED] 5.7 '데이터' (Green Lines) 빌드 시 4-Hint (u/v_placement_...) 키를 '쓰도록' 수정
+    - [REMOVED] 5.7에서 'construction_method_start/end' 키 삭제
     """
     try:
         name = (data or {}).get("image_name")
@@ -3126,7 +3164,7 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
                     green_final_start_map[line_id] = original_start
                 green_final_end_map[line_id] = original_end
 
-        # 5.4.2 [NEW] LCS / Construction / Anchor 힌트맵
+        # 5.4.2 [FIXED] 4-Hint (U/V) 힌트맵 생성
         red_intent_map = {}
         red_construction_map = {}
         if qwen_red_refined:
@@ -3138,18 +3176,22 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
                 red_construction_map[line_id] = vlm_ref.get("construction_method", "")
        
         green_intent_map = {}
-        # [REMOVED] green_anchor_map 삭제
-        green_construction_start_map = {} # <-- [NEW]
-        green_construction_end_map = {}   # <-- [NEW]
+        green_u_placement_start_map = {}
+        green_u_placement_end_map = {}
+        green_v_placement_start_map = {}
+        green_v_placement_end_map = {}
+       
         if qwen_green_refined:
             for g in qwen_green_refined:
                 line_id = g.get("id")
                 if not line_id: continue
                 vlm_ref = g.get("vlm_refinement", {})
                 green_intent_map[line_id] = vlm_ref.get("lcs_orientation_intent", "perpendicular_to_primary")
-                # [NEW] Green Line의 알고리즘 힌트 저장
-                green_construction_start_map[line_id] = vlm_ref.get("construction_method_start", "")
-                green_construction_end_map[line_id] = vlm_ref.get("construction_method_end", "")
+                # [FIXED] Qwen 응답에서 4-Hint 키를 읽어옵니다
+                green_u_placement_start_map[line_id] = vlm_ref.get("u_placement_logic_hint_start", "")
+                green_u_placement_end_map[line_id] = vlm_ref.get("u_placement_logic_hint_end", None) # null 허용
+                green_v_placement_start_map[line_id] = vlm_ref.get("v_placement_logic_hint_start", "")
+                green_v_placement_end_map[line_id] = vlm_ref.get("v_placement_logic_hint_end", "")
 
 
         # 5.5 [REMOVED] 'group_id_vlm' 번역 로직 삭제
@@ -3196,10 +3238,12 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
                 "final_class_hint_start": green_final_start_map.get(line_id), # "red_1"
                 "final_class_hint_end": green_final_end_map.get(line_id), # 10
                
-                # --- [NEW] LCS / Algorithm 힌트 주입 ---
+                # --- [FIXED] 4-Hint (U/V) 힌트 주입 ---
                 "lcs_orientation_intent": green_intent_map.get(line_id, "perpendicular_to_primary"),
-                "construction_method_start": green_construction_start_map.get(line_id, ""), # <-- [NEW]
-                "construction_method_end": green_construction_end_map.get(line_id, ""),   # <-- [NEW]
+                "u_placement_logic_hint_start": green_u_placement_start_map.get(line_id, ""),
+                "u_placement_logic_hint_end": green_u_placement_end_map.get(line_id, None), # null 허용
+                "v_placement_logic_hint_start": green_v_placement_start_map.get(line_id, ""),
+                "v_placement_logic_hint_end": green_v_placement_end_map.get(line_id, ""),
                
                 # --- [REMOVED] Green Line DINO ROI 삭제 ---
                 "grounded_rois": None
@@ -3266,7 +3310,7 @@ async def fewshot_select(name: str = Query(...), k: int = Query(2)):
     except Exception as e:
         log.exception("[fewshot/select] failed")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-    
+
 @app.get("/fewshot/asset")
 async def fewshot_asset(item_id: str = Query(...), name: str = Query(...)):
     safe = {"merge.jpg","overlay.jpg","ppt.jpg","mask.jpg"}
@@ -4164,7 +4208,7 @@ def _safe_invoke_gptoss_for_code_from_sdiff(
     resp2 = llm.invoke(messages)
     code2 = _extract_text_from_aimessage(resp2).strip()
     return _strip_code_fence(code2)
-        
+
 # [NEW] SDIFF -> GPT-OSS 직접 생성 엔드포인트
 @app.post("/gptoss/generate_from_sdiff")
 async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
