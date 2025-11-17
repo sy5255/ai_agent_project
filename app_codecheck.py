@@ -172,11 +172,31 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
 2. (두 번째 User 메시지): 너는 '새로운' [New Logic Hint (SDIFF)]를 받는다.
 너의 유일한 출력은 SDIFF 힌트(2)를 예제 코드(1)의 구조에 맞춰 구현한 **'완전한' 파이썬 코드**여야 한다.
 
+## [핵심 요약 규칙 — 이 6줄이 최우선/불변 규칙이다]
+
+1. [Reference Code]는 단순 텍스트 예시이며, 사용이 필요하다면 함수는 def 형태로 직접 그대로 복사해서 사용한다.
+2. 네가 출력하는 최종 코드에서 `def`로 정의되지 않은 함수는 절대 호출하면 안 된다.
+3. meta_utils만 실제 존재하며, meta_utils.함수() 호출만 허용된다.
+4. 측정 로직 관련 모든 함수는 새 코드 안에서 직접 def로 만들어야 한다.
+5. 허용 import는 cv2, numpy, pandas, meta_utils, 표준 라이브러리 뿐이다.
+6. 최종 파일은 단일 파이썬 스크립트로, 외부 파일 없이 단독 실행 가능해야 한다.
+
+## [신규: 헬퍼 함수 존재성 규칙 (NameError 방지)]
+
+1. [Reference Code] 안에 등장하는 '모든' 헬퍼 함수 이름(예: `line_endpoints_from_fit`, `anchors_from_class10_top_peaks` 등)은
+   네가 최종 코드에서 사용하고 싶다면, **반드시 새 코드 안에서 `def`로 다시 정의하거나 그대로 복사해 와야 한다.**
+2. 최종 코드에서 `def`로 정의되지 않은 함수는, [Reference Code]에만 존재하더라도 **절대 호출하면 안 된다.**
+3. meta_utils를 제외한 어떤 함수도 "이미 어딘가에 정의되어 있을 것"이라고 가정해서는 안 된다.
+   **너의 출력 코드 파일 하나만으로 실행이 가능해야 하며, 이 파일 안에 정의되지 않은 함수는 존재하지 않는 것으로 간주하라.**
+4. 만약 [Reference Code]에서 본 함수 호출을 재사용하고 싶지만, 그 함수의 `def`가 보이지 않거나 너무 길어서 가져올 수 없다면,
+   그 함수 호출 자체를 **완전히 버리고**, SDIFF 논리에 맞는 새로운 헬퍼 함수를 `def`로 직접 구현해야 한다.
+
 ## [초필수] SDIFF 논리 vs. 예제 코드 충돌 규칙 (필수 준수)
 
 1.  **(우선순위)** 너의 **'유일한 진실'**은 [New Logic Hint (SDIFF)]의 '논리적 의도' (예: `coordinate_system`, `construction_logic_hint`, `lcs_orientation_intent`)이다.
 2.  **(충돌 시 무시)** 만약 SDIFF의 '논리'가 [Reference Code]의 '구현' (예: `anchors_from_class10_top_peaks`, `max_point_in_interval_for_class` 함수 로직)과 **충돌**한다면, 너는 **'반드시' [Reference Code]의 구현을 '무시'**하고 SDIFF의 '논리'를 **'새로 구현'**해야 한다.
 3.  **(예시 1: 좌표계)** [Reference Code]가 `dir_u`, `dir_n`을 사용하더라도, 너는 SDIFF의 `coordinate_system` 힌트를 기반으로 `v_axis`, `v_normal`, `local_to_world` 함수를 **'새로 정의'**하고 사용해야 한다.
+4.  모든 좌표 변환 함수들(예: `v_axis`, `v_normal`, `local_to_world`)은 반드시 Python의 float 값을 반환해야 한다. numpy 배열(numpy array), numpy 스칼라(numpy scalar), 그리고 numpy 숫자를 포함한 리스트나 튜플을 반환해서는 절대 안 된다.
 
 ## [매우 중요] 좌표계 (Coordinate System) 규칙 (필수 준수)
 
@@ -189,6 +209,11 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
     b. `red_1`의 `construction_logic_hint` (예: 'darkest 4 핑거 피팅')를 읽고, 이 선분을 **'찾아내는'** OpenCV 로직(예: `def find_primary_axis(mask, class_val, roi_rect)`)을 **'새로 생성(def)'**하고 실행해야 한다.
     c. 이 로직의 결과(픽셀 집합)에 `cv2.fitLine` 등을 호출하여 **`v_axis` (주축 단위 벡터)**와 **`v_normal` (법선 단위 벡터)**을 '계산'한다. (이때 원점 `origin`도 필요하면 정의한다.)
     d. 로컬 좌표(LCS)를 절대 좌표(ACS)로 변환하는 `def local_to_world(local_pt, origin, v_axis, v_normal)` 헬퍼 함수를 '정의'한다.
+    e. ** [치명적 버그 수정: 좌표 순서] 너는 '반드시' 다음 4개 규칙을 중수해야 한다: **
+        `i.   np.where(...)의 결과는 (y, x) = (row, col) 순서다.`
+        `ii.  cv2.fitLine에 전달하는 points는 반드시 (x, y) 순서여야 한다.`
+        `iii. 따라서 fitLine에 넣기 전에 xs, ys를 분리해서 (예: `ys, xs = np.where(...)`), `points = np.stack([xs, ys], axis=1).astype(np.float32)`와 같이 (x, y) 순서로 재구성해야 한다.`
+        `iv.  '절대' `np.column_stack(np.where(...))`를 `cv2.fitLine`에 직접 넘기지 마라.`
 4.  **(LCS 구현 - Phase 2: 보조 축 재정의)**
     a. `red.lines`에서 `lcs_orientation_intent`가 'parallel_to_primary' 또는 'perpendicular_to_primary'인 **모든 보조 축(예: 'red_2')**을 루프로 순회한다.
     b. 'red_2'의 `construction_logic_hint`를 읽고, 이 선분의 **'위치(location)'**를 찾는 로직(예: `def find_secondary_axis_location(...)`)을 '생성'하고 실행한다.
@@ -204,6 +229,29 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
     e. 이 함수는 `roi_mask` 내부에서 `final_class_hint_end` (예: 30)에 해당하는 *모든* 픽셀을 찾고, `v_normal` (법선) 방향으로 투영하여 mask 외곽선 위의 점을 잡는 측정 로직을 구현해야한다.
     f. `u_start` 좌표 역시 `u_placement_logic_hint_start` 힌트(예: "centroid of 1st finger")를 기반으로 **'새로 계산'**해야 한다. (절대 [Reference Code]의 `top_points_roi`를 사용하지 마라.)
     g. 계산된 로컬 좌표 `(u_start, v_start)`와 `(u_end, v_end)`를 `local_to_world`로 변환한다. (만약 `u_end`가 `null`이면 `u_start`를 사용한다.)
+    
+        [좌표계 일관성 규칙 — 필수]
+
+        ROI 내부 좌표(x_local, y_local)는 절대로 LCS 계산(u, v)에 직접 사용해서는 안 된다.
+        u, v 를 계산할 때는 항상 다음 두 단계를 지켜야 한다:
+
+        1) ROI 로컬 좌표 → 이미지 절대 좌표 변환  
+        abs_x = roi_x + x_local  
+        abs_y = roi_y + y_local
+
+        2) 절대 좌표 abs_x, abs_y 를 origin과 두 축 벡터(axis_u, axis_v)를 기준으로 u, v 좌표로 변환한다.  
+        (origin, axis_u, axis_v 는 항상 “이미지 전체 절대 좌표계”에서 정의된다.)
+
+        금지:
+        - ROI 좌상단(roi_x, roi_y)을 origin처럼 사용  
+        - (x_local, y_local)을 그대로 u/v 계산에 사용  
+        - ROI를 새로운 좌표계 원점처럼 간주하는 코드  
+        - axis_u / axis_v 를 ROI 기준으로 재정의하는 코드
+
+        허용:
+        - ROI는 검색영역(window) 역할만 하며,
+        LCS(u, v) 계산은 반드시 “절대좌표 → (u, v)” 변환 절차를 거쳐야 한다.
+
 6.  **(LCS 구현 - Phase 4: 최종 변환 및 저장)**
     a. 계산된 최종 **'절대 좌표 (sx, sy, ex, ey)'**를 `cv2.line`으로 그리고 `measurements.csv`에 저장한다.
 
@@ -214,6 +262,7 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
 3. **(혼동 금지)** [Reference Code]는 오직 `import`, `def` 헬퍼 함수, `main` 함수의 **'구조(Structure)'**를 참고하기 위한 '스타일 가이드'일 뿐, 그 안의 **'값(Value)'**은 현재 작업과 무관하다.
 
 ## [매우 중요] CV 및 로직 생성 규칙 (필수 준수):
+※ 모든 기하학 계산·좌표·길이·ROI 값은 연산·비교·JSON/CSV 직렬화 전에 항상 `float()` 또는 `int()`로 캐스팅된 파이썬 기본 타입이어야 하며, NumPy ndarray/NumPy 스칼라는 사용하면 안 된다.
 
 1. **(유일한 진실)** [New Logic Hint (SDIFF)] (`green.lines`, `red.lines`, `notes`의 '논리')만을 **'유일한 진실'**로 삼아 로직을 구현하라.
 2. **(최우선 경로: Grounding)** SDIFF의 `red.lines[0].grounded_rois` 키에 **좌표 리스트(ROIs)**가 존재하는지 '반드시' 확인하라.
@@ -237,7 +286,9 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
     b. **[패딩 변수화]** 코드 상단에 **4개의 전역 상수**를 '반드시' 정의한다. (이 값은 `argparse`가 아니다.)
         (예: `ROI_PAD_TOP = 20`, `ROI_PAD_BOTTOM = 80`, `ROI_PAD_LEFT = 20`, `ROI_PAD_RIGHT = 20`)
     c. `main` 함수에서 `template_filename`을 **`args.out_dir` (실행 폴더)**에서 로드한다.
-        (예: `template_path = os.path.join(args.out_dir, sdiff_template_filename)`)
+        - 절대 `mask_path`나 데이터셋 폴더(`dataset_updated/mask` 등)를 기준으로 템플릿 경로를 만들지 마라.
+        - 즉, 템플릿 경로는 항상 아래 형태여야 한다:
+         `template_path = os.path.join(args.out_dir, sdiff_template_filename)`
     d. `template_img = cv2.imread(template_path, 0)`로 템플릿을 로드하고, `None`이 아닌지 확인한다.
     e. `cv2.matchTemplate(new_mask_image, template_img, cv2.TM_CCOEFF_NORMED)`를 실행하여 `maxLoc` (새로운 `rect_global`의 원점)을 찾는다.
     f. `green.lines`를 루프로 순회하며 `line.relative_roi` (SDIFF에 저장된 작은 ROI)를 가져온다.
@@ -247,6 +298,39 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
     j. **[디버그 이미지]** `main` 함수 끝 `overlay.png` 저장 직전에, **'roi_debug.png'**라는 새 파일을 `out_dir`에 '반드시' 저장해야 한다.
     k. **[디버그 상세]** `roi_debug.png`는 원본 `mask_path`를 컬러로 변환한 배경 위에, `green.lines` 루프에서 계산된 **'최종 타겟 ROI'** (패딩이 적용된) 박스 6개를 **각각 다른 색상**과 `line.id` 텍스트로 그려야 한다.
     l. (검색 영역 오류 방지) `grounding_template`이 없다면, 'i'항목의 로직을 `red.lines[0].grounded_rois` (DINO ROI) 영역 내에서 수행해야 한다.
+    m. **(relative_roi 해석 규칙 - 매우 중요)** `green.lines[*].relative_roi = [dx, dy, w, h]` 는
+       항상 "템플릿 패치 좌상단(match_x, match_y) 기준 로컬 좌표"로 해석해야 한다.
+       - 새 이미지에서의 최종 ROI 절대 좌표는 반드시 다음 공식을 따라야 한다:
+         · abs_x = match_x + dx
+         · abs_y = match_y + dy
+         · abs_w = w
+         · abs_h = h
+       - 절대로 다음과 같이 구현하면 안 된다:
+         · abs_x = dx + (match_x - src_x)
+         · abs_y = dy + (match_y - src_y)
+         와 같이 `source_rect`의 좌표를 섞어서, ROI가 (0,0) 근처로 쓸려가게 만드는 형태는 **금지**한다.
+       - 요약: `relative_roi` 는 항상 "템플릿 패치 기준 로컬 좌표", `match_x, match_y` 는 "새 이미지에서의 템플릿 패치 절대 좌표"로 사용하라.
+    n. **(RED_ROI / grounded_rois 평행 이동 규칙)** SDIFF.red.lines[*].grounded_rois 또는 RED_ROI
+       (예: [rx, ry, rw, rh]) 는 "정답(canonical) 이미지" 기준 절대 좌표이다.
+       - 템플릿 매칭 후에는 다음과 같이 동일한 translation 을 적용해야 한다:
+         · offset_x = match_x - src_x
+         · offset_y = match_y - src_y
+         · red_x_new = rx + offset_x
+         · red_y_new = ry + offset_y
+       - RED, GREEN, 기타 모든 ROI는 **반드시 동일한 translation(offset_x, offset_y)을 공유**해야 한다.
+         구조물 간 상대 위치가 바뀌거나 스케일/회전이 추가되면 안 된다. (translation only)
+    o. **(ROI 클램핑 금지 - 좌측 상단 몰림 방지)** padding 을 적용하더라도,
+       ROI 시작 좌표를 단순히 `x = max(0, x)`, `y = max(0, y)` 로 처리하여
+       "여러 ROI가 모두 (0,0) 근처로 몰려 있고, 서로 간 간격만 유지되는" 결과가 나오게 해서는 안 된다.
+       - 이미지 경계를 넘는 부분은 잘려 나가도 되지만, ROI 그룹 전체(RED + 모든 GREEN)의 상대적인 위치 관계는 유지되어야 한다.
+       - 만약 padding 이후 x 또는 y가 0보다 작아진다면, 이것은 "경계 일부가 잘려 나간 것"으로만 해석해야 하고, ROI 전체를 강제로 원점(0,0) 근처로 당기는 코드는 생성하면 안 된다.
+    p. **(ROI 유효성 검증 및 클램핑 규칙)** 템플릿 매칭이나 오프셋 적용 후 계산된 **모든 ROI**에 대해,
+       너는 `x, y, x + w, y + h` 를 이미지 경계 `[0, 0, img_w, img_h]` 범위로 **클램핑**해야 한다.
+       이 클램핑 결과로 폭(`w`) 또는 높이(`h`)가 `0`이 되거나, SDIFF의 의도에 비해 **지나치게 작아진 ROI**는
+       해당 측정을 **조용히 계속 진행하지 말고**, 그 측정만 **건너뛰거나 명시적인 에러**를 발생시켜야 한다.
+       (즉, 잘못된 ROI로 억지로 측정하는 코드를 만들어서는 안 된다.)
+       (추가 규칙) ROI 클램핑은 ROI 박스 경계에만 적용되며, u/v 계산은 항상 절대좌표(abs_x, abs_y)와 origin, axis_u, axis_v 기반으로 수행해야 한다. ROI 로컬좌표(0~w,0~h)를 u/v에 직접 사용하는 코드는 금지한다.
+
 
 10. **(신규: LCS 그리기 강제)** `coordinate_system.type`이 **'local'**일 때, **'절대'** 절대 좌표(ACS)에서 찾은 `(sx, sy)`와 또 다른 절대 좌표 `(ex, ey)`를 `cv2.line`으로 직접 연결하지 마라. 너는 **'반드시'** SDIFF의 '좌표계 규칙 5.g'와 '6.a'를 따라야 한다:
     a. `(u_start, v_start)`와 `(u_end, v_end)`라는 **'로컬(u,v) 좌표'** 4개를 먼저 계산한다.
@@ -263,6 +347,31 @@ _GPTOSS_SDIFF_RULES_PROMPT = f"""
 5. **(Import 금지)** `measurement_utils`라는 파일은 존재하지 않는다. **'절대'** `import measurement_utils`를 시도하지 마라.
 6. **(meta_utils 규칙)** `import meta_utils`는 '필수'이다. `__wrap_load_pixel_scale_um` 함수를 **'반드시'** 호출해야 하며, 이 함수는 `(umx, umy, classes_list, meta_path_str)` 4개의 값을 반환한다.
 7. **(인자 금지)** [Reference Code]에 `mask_merge_path` 인자가 있더라도, '절대' `argparse`에 추가하지 마라.
+8. **(신규: JSON/CSV 직렬화 타입 규칙)**  
+   `measurements.csv`의 각 row, 그리고 `note` 필드에 `json.dumps()`를 사용할 때  
+   **절대** numpy 타입을 그대로 넣으면 안 된다.  
+   다음 규칙을 항상 지켜라:
+   a. `note_obj` 와 같이 JSON으로 직렬화되는 객체 안에는  
+      오직 파이썬 기본 타입만 포함되어야 한다:
+      - `int`, `float`, `str`, `bool`, `None`
+      - 이들의 `list` / `dict` 조합만 허용된다.
+   b. 다음 타입들은 **반드시** 직렬화 전에 변환해야 한다:
+      - `np.float32`, `np.float64`, `np.int64` 등 numpy 스칼라  
+      - `np.ndarray` (예: 좌표 배열, ROI 배열 등)
+      변환 예시:
+      - `float(np_value)` 또는 `int(np_value)` 로 파이썬 숫자로 변환  
+      - `np_array.tolist()` 로 파이썬 리스트로 변환
+   c. 좌표/길이/ROI 정보를 `note`에 저장할 때는  
+      다음과 같이 **명시적으로 형변환** 하여 사용해야 한다:
+      - 예:  
+        `centroid = [float(cx), float(cy)]`  
+        `roi = [int(x), int(y), int(w), int(h)]`  
+        `projected_start = [float(sx), float(sy)]`
+   d. 만약 `json.dumps()` 호출 시  
+      `"Object of type float32 is not JSON serializable"`  
+      같은 에러가 날 수 있는 코드(= numpy 타입을 그대로 담는 코드)를  
+      **생성하거나 유지해서는 안 된다.**  
+      항상 사전에 파이썬 기본 타입으로 변환하라.
 """
 
 # === 추가: generation_config 상태 캡처/로그 유틸 ===
@@ -1956,13 +2065,13 @@ def _safe_invoke_gptoss_for_code(guide_text: str, fewshot_texts: List[str]) -> s
 
 # [NEW] Qwen-VL 호출을 위한 JSON 프롬프트 구조 (동적 생성됨)
 # 이 구조는 Qwen에게 "무엇을 채워야 하는지" 알려주는 '틀'입니다.
-def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: List[str]) -> str:
+def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_map: Dict) -> str:
     """
-    [CHANGED] 3개 이미지 + CV SDIFF 힌트 + '밝기 서술자'를 Qwen-VL에 전달합니다.
+    [CHANGED] 3개 이미지 + CV SDIFF 힌트 + '밝기 맵'을 Qwen-VL에 전달합니다.
    
     [LCS PLAN - STEP 1]
     - [NEW] "coordinate_system" 블록 추가 (1. VLM'의 '의도' 선언)
-    - [NEW] "lcs_orientation_intent" 키 추가 (2. VLM의 '의도' 선언)
+    - [NEW] "lcs_orientation_intent" 키 추가 (2. VLM'의 '의도' 선언)
    
     [ANCHORING PLAN - STEP 1]
     - [REMOVED] 'green_measures_refined.vlm_refinement.group_id' 질문 삭제
@@ -1971,8 +2080,8 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
     [GREEN DINO PLAN - STEP 1]
     - [NEW] 'green_measures_refined.vlm_refinement'에 'grounding_dino_prompt' 및 'grounding_location_hint' 추가
     [LCS PLAN - STEP 1]
-    - [NEW] "coordinate_system" 블록 추가 (1. VLM의 '의도' 선언)
-    - [NEW] "lcs_orientation_intent" 키 추가 (2. VLM의 '의도' 선언)
+    - [NEW] "coordinate_system" 블록 추가 (1. VLM'의 '의도' 선언)
+    - [NEW] "lcs_orientation_intent" 키 추가 (2. VLM'의 '의도' 선언)
    
     [FARTHEST POINT PLAN - STEP 1]
     - [REMOVED] 'anchor_logic_hint' 삭제 (construction_method_end가 대체)
@@ -1981,7 +2090,7 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
    
     [FINAL PLAN - STEP 1 (Correction)]
     - [MODIFIED] 'construction_method_end'의 'e.g.' (예시)에서 "farthest"를 제거하여
-                  Qwen이 스스로 알고리즘을 추론하도록 '개방형 질문'으로 수정.
+                  Qwen이 스스로 알고즘을 추론하도록 '개방형 질문'으로 수정.
                  
     [USER REQUEST: 4-HINT (U/V) STRUCTURE]
     - [REPLACED] 'construction_method_start' and 'construction_method_end'
@@ -1993,24 +2102,43 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
     - [REMOVED] All hardcoded hints like 'red_1' or 'fingers' from the prompt text.
     - [MODIFIED] `grouping_logic.description` to be general and ask for patterns,
       removed "6 independent lines" hint.
+     
+    [USER REQUEST: BUG-FIX (v8) - Force VLM to obey CV hints (Dynamic Prompting)]
+    - [MODIFIED] Signature now accepts brightness_map (Dict).
+    - [MODIFIED] Dynamically creates reverse_brightness_map.
+    - [MODIFIED] ALL FOUR u/v_placement_... prompts are now dynamically generated
+      to inject the specific class name (e.g., 'middle_gray_1') based on the
+      CV hint (e.g., 30), forcing VLM to be consistent.
     """
     import json
    
+    # [NEW] brightness_map (e.g., {'darkest': 10})을
+    # reverse_brightness_map (e.g., {10: 'darkest'})으로 변환합니다.
+    reverse_brightness_map = {}
+    brightness_descriptors = []
+    if brightness_map:
+        try:
+            for k, v in brightness_map.items():
+                reverse_brightness_map[int(v)] = str(k)
+            brightness_descriptors = list(brightness_map.keys())
+        except Exception:
+            pass # 실패 시 빈 맵 사용
+
     desc_options_str = f"e.g., {json.dumps(brightness_descriptors[:2])}" if brightness_descriptors else "(e.g., ['darkest'])"
     desc_list_str = f"Available brightness descriptors: {json.dumps(brightness_descriptors)}"
 
     json_prompt_structure_obj = {
         "analysis_summary": "One-sentence summary of the measurement task.",
        
-        # --- [MODIFIED] Grouping Logic Prompt ---
+        # --- (Grouping Logic: 변경 없음) ---
         "grouping_logic": {
             "description": "CRITICAL (Grouping): Do the green measurement items (lines) appear to repeat in a similar, structured way, or is each line completely unique and independent? (e.g., 'Repeats: 2 lines per structural unit', 'Independent: each line has a unique logic')",
             "interval_definition": "If they repeat or are grouped, what geometric structure defines the group or interval? (e.g., 'Grouped by the 'darkest' finger structures', 'Grouped by grooves')",
             "geometric_relationship": "CRITICAL: What is the geometric relationship between red and green lines? (e.g., 'Green lines are perpendicular/normal to the red line', 'Green lines are all vertical')",
             "direction_relative_to_red": "CRITICAL: In which direction do the green lines point *relative to the red line*? (e.g., 'downwards', 'upwards', 'towards the bottom of the image')"
         },
-        # --- [MODIFIED] END ---
        
+        # --- (Coordinate System: 변경 없음) ---
         "coordinate_system": {
             "type": "What is the coordinate system type? Choose one: ['absolute', 'local']",
             "reason": "Why? (e.g., 'A rotated red guide line exists', 'No red guides')",
@@ -2024,7 +2152,7 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
         "green_measures_refined": []
     }
 
-    # 1. RED 가이드라인 (DINO 힌트 유지 - 검색 영역용)
+    # 1. RED 가이드라인 (변경 없음)
     try:
         cv_red_lines = cv_sdiff.get("red_lines_detail", [])
         for line in cv_red_lines:
@@ -2045,13 +2173,25 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
     except Exception as e:
         log.warning(f"[Qwen] Failed to build red prompt: {e}")
 
-    # 2. GREEN 측정선 (개방형 질문)
+    # 2. GREEN 측정선 (핵심 수정)
     try:
         cv_green_lines = cv_sdiff.get("green_lines_detail", [])
         for line in cv_green_lines:
            
             cv_start_hint_val = line.get("detected_class_hint_start")
             cv_end_hint_val = line.get("detected_class_hint_end")
+
+            # --- [NEW] 힌트를 문자열로 변환 ---
+            def _get_truth_str(hint_val):
+                if isinstance(hint_val, str):
+                    return f"the guide line '{hint_val}'"
+                if isinstance(hint_val, int) and hint_val in reverse_brightness_map:
+                    return f"the class '{reverse_brightness_map[hint_val]}' (value: {hint_val})"
+                return f"the raw hint '{hint_val}'"
+
+            truth_str_start = _get_truth_str(cv_start_hint_val)
+            truth_str_end = _get_truth_str(cv_end_hint_val)
+            # --- [NEW] END ---
 
             json_prompt_structure_obj["green_measures_refined"].append({
                 "id": line.get("id"),
@@ -2070,16 +2210,38 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_descriptors: Li
                     "connected_red_guide_id_start": "If 'start_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
                     "connected_red_guide_id_end": "If 'end_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
                    
-                    # --- [MODIFIED] "4-Hint" (U/V) - 사용자님의 '길고 구체적인' 프롬프트로 복원 ---
-                    "u_placement_logic_hint_start": "Use the existing GREEN line only as a visual hint. First, infer which mask or scribble structure this line is aligned with horizontally (for example, 'top peak of a darkest finger', 'centerline of a class-30 ridge', or 'x-position of a finger inside ROI_Red'). Then describe a pixel-level algorithm that could place a NEW measurement line at the same U-position using only the mask, the red guide line, and ROI information, without assuming the green line already exists.",
+                    # --- [MODIFIED] "4-Hint" (U/V) - 동적 프롬프트 주입 ---
+                   
+                    "u_placement_logic_hint_start": (
+                        f"CRITICAL: The TRUTH for the start point is {truth_str_start}. "
+                        "Describe the pixel-level algorithm to find the U-position (anchor) "
+                        f"based *only* on THAT truth. (e.g., 'find centroid of {truth_str_start}')."
+                    ),
 
-                    "u_placement_logic_hint_end": "Using the visible GREEN line only as a clue, decide whether the END U-coordinate should differ from the START U-coordinate. If it differs, infer which structure determines the END U (for example, a different finger or ridge) and give a pixel-level algorithm to compute that END U from the mask in (u, v) space. If the END U is intended to reuse the same u-strip as START, explicitly return null and clearly state that the same U-range is used.",
+                    "u_placement_logic_hint_end": (
+                        f"CRITICAL: The TRUTH for the end point is {truth_str_end}. "
+                        "If the measurement is vertical, this value is likely null (to reuse u_start). "
+                        "If horizontal (width), this defines the U-END. "
+                        f"Describe the algorithm to find this U-END (e.g., 'find right-most point of {truth_str_end}') "
+                        "OR return null if u_start is reused."
+                    ),
 
-                    "v_placement_logic_hint_start": "Treat the visible GREEN line as a hint for where the measurement starts, but explain how to reconstruct that START point from scratch. Specify which object defines v = 0 (typically the red guide line used as the u-axis), then give exact steps to: (1) choose the anchor point on the finger or structure, (2) convert it to (u, v) coordinates using the red guide line as the u-axis, and (3) if needed, project it onto the red guide line so that the START point lies exactly on that guide line.",
+                    "v_placement_logic_hint_start": (
+                        f"CRITICAL: The TRUTH for the start point is {truth_str_start}. "
+                        "Describe the algorithm to find the V-START based *only* on THAT truth. "
+                        f"If the truth is a guide line (e.g., 'red_1'), the V-START is 0 (projected onto the guide). "
+                        f"If the truth is a class (e.g., 'middle_gray_1'), describe how to find the V-START on THAT class boundary."
+                    ),
 
-                    "v_placement_logic_hint_end": "Treat the END of the GREEN line as the final measurement result and infer which class or structure its END point lies on (for example, the bottom-most pixel of the target class inside the same u-strip as START). Then describe a step-by-step local-coordinate algorithm: convert all candidate pixels of the target class to (u, v), filter them by the u-strip around START, and select the pixel with the appropriate v (usually the maximum v in the downward direction). If the END is intended to coincide with START, explicitly return null.",
+                    "v_placement_logic_hint_end": (
+                        f"CRITICAL: The TRUTH for the end point is {truth_str_end}. "
+                        "Describe the algorithm to find the V-END based *only* on THAT truth. "
+                        f"If vertical (height), infer the boundary (e.g., 'bottom-most point of {truth_str_end}'). "
+                        f"If horizontal (width), this is likely null (to reuse v_start). "
+                        "Provide the algorithm OR return null."
+                    ),
                     # --- [MODIFIED] END ---
-                                    
+                                   
                     "lcs_orientation_intent": "CRITICAL: What is this line's orientation *relative to the local grid*? Choose one: ['parallel_to_primary', 'perpendicular_to_primary', 'unrelated']"
                 }
             })
@@ -2176,9 +2338,9 @@ def _qwen_mm_generate_chat(processor, model, pil_images, prompt: str) -> str:
         out = model.generate(**text_inputs, **vision_inputs, max_new_tokens=256)
     return processor.batch_decode(out, skip_special_tokens=True)[0]
 
-def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribble_path: Path, cv_sdiff: Dict, brightness_descriptors: List[str]) -> Dict[str, Any]:
+def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribble_path: Path, cv_sdiff: Dict, brightness_map: Dict) -> Dict[str, Any]:
     """
-    [CHANGED] 3개 이미지 + CV SDIFF 힌트 + '밝기 서술자'를 Qwen-VL에 전달합니다.
+    [CHANGED] 3개 이미지 + CV SDIFF 힌트 + '밝기 맵'을 Qwen-VL에 전달합니다.
     """
     import re, json
     from PIL import Image
@@ -2218,8 +2380,8 @@ def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribb
             processor, model, is_mm, meta = _qwen_pipe
 
             # --- [PROMPT CHANGE START] ---
-            # [CHANGED] '밝기 서술자' 목록을 Qwen 프롬프트에 전달
-            json_prompt_structure = _build_qwen_json_prompt_structure(cv_sdiff, brightness_descriptors)
+            # [MODIFIED] 'brightness_map' (전체 맵)을 프롬프트 빌더로 전달
+            json_prompt_structure = _build_qwen_json_prompt_structure(cv_sdiff, brightness_map)
 
             content = []
             prompt_parts = []
@@ -2254,7 +2416,11 @@ def _qwen_summarize_scribble(mask_path: Optional[Path], merge_path: Path, scribb
             prompt_parts.append("\nYour first task is to **VERIFY or CORRECT** the `cv_hint` for each line.")
             prompt_parts.append("The `cv_hint` (e.g., 50) is just a guess based on location and **IS LIKELY WRONG**.")
             prompt_parts.append("Use your visual reasoning (e.g., 'the red guide *looks like* it's fitting the 'darkest' fingers') to determine the *true* classes needed.")
+           
+            # [MODIFIED] `brightness_descriptors` 대신 `brightness_map`의 키 목록을 표시
+            brightness_descriptors = list(brightness_map.keys())
             prompt_parts.append(f"You MUST use the 'brightness descriptors' from this list: {json.dumps(brightness_descriptors)}")
+           
             prompt_parts.append("Fill in the 'vlm_refinement' sections based on your reasoning.")
             prompt_parts.append("Provide your analysis STRICTLY in the following JSON format. Do NOT add any other text, explanations, or 'thinking' steps.")
            
@@ -2689,7 +2855,6 @@ async def vl_describe4(
         return JSONResponse({"ok": False, "error": str(e)}, status_code=200)
 
 # [기존 app_codecheck.py 파일 내용 중 vl_continue4 함수 부분만 찾아서 교체]
-
 @app.post("/vl/continue4")
 async def vl_continue4(
     vl_model: str = Form("llama4"),
@@ -3128,7 +3293,8 @@ async def vl_sdiff_qwen(data: Dict = Body(...)):
                 merge_path,
                 scribble_path,
                 cv_sdiff=sdiff_cv_v1,
-                brightness_descriptors=brightness_descriptors
+                # [MODIFIED] 'brightness_descriptors' 대신 'brightness_map' (전체 맵)을 전달
+                brightness_map=brightness_map
             )
         except Exception as qe:
             log.warning(f"Qwen semantic enrichment failed, using CV-only: {qe}")
@@ -3572,11 +3738,41 @@ async def sdiff_get_latest(image_name: str = Query(...)):
 @app.get("/fewshot/select")
 async def fewshot_select(name: str = Query(...), k: int = Query(2)):
     try:
-        items = _select_topk_fewshots_for(name, k=k)
-        return JSONResponse({"ok": True, "items": items})
+        # 1. Select top-k few-shots (same as before)
+        selected_items = _select_topk_fewshots_for(name, k=k)
+       
+        # 2. [NEW] Build the rich 'used_fewshots' structure, including the 'parts' array
+        rich_items = []
+        for it in selected_items:
+            item_id = it["id"]
+            d = Path(it["_dir"])
+            parts = []
+           
+            # Check for assets and build their URLs
+            for nm in ("mask.jpg", "merge.jpg", "ppt.jpg"):
+                if (d / nm).exists():
+                    parts.append({
+                        "name": nm,
+                        "url": f"/fewshot/asset?item_id={quote(item_id, safe='')}&name={quote(nm, safe='')}"
+                    })
+                   
+            # Append the rich object (this now matches the structure from vl_describe4)
+            rich_items.append({
+                "id": item_id,
+                "score": it["score"],
+                "score_breakdown": it.get("score_breakdown", {}),
+                "meta": it.get("meta", {}),
+                "parts": parts, # <-- [THE FIX] The missing image URL array
+                "created_at": it.get("created_at")
+            })
+
+        # 3. Return the new 'rich_items' list
+        return JSONResponse({"ok": True, "items": rich_items})
+       
     except Exception as e:
         log.exception("[fewshot/select] failed")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
 
 @app.get("/fewshot/asset")
 async def fewshot_asset(item_id: str = Query(...), name: str = Query(...)):
@@ -3657,7 +3853,6 @@ def _load_pil_resized_keep_scale(p: Path, max_side: int):
     return pil, (sx, sy)
 
 # [ADD NEW FUNCTION] (app_codecheck.py: line 3230)
-
 def _sanitize_sdiff_for_codemodel(sdiff_dict: dict) -> dict:
     """
     GaussO-Think/GPT-OSS로 전달하기 전에 SDIFF를 '정리(Sanitize)'합니다.
@@ -3748,6 +3943,7 @@ def _reject_merge_copying(code: str) -> str | None:
         if re.search(pat, code):
             return f"Forbidden pattern detected: {pat}"
     return None
+
 
 # [REPLACE] _upgrade_sdiff_to_lite 함수
 def _upgrade_sdiff_to_lite(sdiff: dict | None) -> dict | None:
@@ -3995,7 +4191,7 @@ async def code_run(payload: dict = Body(...)):
     image_name = payload.get("image_name")
     code_text  = payload.get("code","")
     auto_fix   = bool(payload.get("auto_fix", True))
-    max_fixes  = int(payload.get("max_fixes", 5))
+    max_fixes  = int(payload.get("max_fixes", 1))
     if not image_name or not code_text:
         return JSONResponse({"error":"image_name and code are required"}, status_code=400)
 
@@ -4474,7 +4670,7 @@ def _safe_invoke_gptoss_for_code_from_sdiff(
     resp2 = llm.invoke(messages)
     code2 = _extract_text_from_aimessage(resp2).strip()
     return _strip_code_fence(code2)
-
+        
 # [NEW] SDIFF -> GPT-OSS 직접 생성 엔드포인트
 @app.post("/gptoss/generate_from_sdiff")
 async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
