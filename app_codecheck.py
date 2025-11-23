@@ -800,7 +800,7 @@ def _python_executable() -> str:
 
 def _ensure_dir(d: Path):
     d.mkdir(parents=True, exist_ok=True)
-    
+
 def _sdiff_to_recipe(sdiff: dict) -> dict:
     """
     scribble_v2_lite 기반 SDIFF에서 '측정 레시피'를 추출한다.
@@ -2204,14 +2204,11 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_map: Dict) -> s
                     "detected_class_hint_end": cv_end_hint_val
                 },
                 "vlm_refinement": {
-                    # --- (기존 로직) ---
                     "start_is_connected_to_red_guide": "CRITICAL: Does the start point visually connect to *any* red guide line? (true/false)",
                     "end_is_connected_to_red_guide": "CRITICAL: Does the end point visually connect to *any* red guide line? (true/false)",
                     "connected_red_guide_id_start": "If 'start_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
                     "connected_red_guide_id_end": "If 'end_is_connected...' is TRUE, what is the ID of the red line it connects to? (e.g., 'red_1', 'red_2', or null)",
-                   
-                    # --- [MODIFIED] "4-Hint" (U/V) - 동적 프롬프트 주입 ---
-                   
+
                     "u_placement_logic_hint_start": (
                         f"CRITICAL: The TRUTH for the start point is {truth_str_start}. "
                         "Describe the pixel-level algorithm to find the U-position (anchor) "
@@ -2240,8 +2237,6 @@ def _build_qwen_json_prompt_structure(cv_sdiff: Dict, brightness_map: Dict) -> s
                         f"If horizontal (width), this is likely null (to reuse v_start). "
                         "Provide the algorithm OR return null."
                     ),
-                    # --- [MODIFIED] END ---
-                                   
                     "lcs_orientation_intent": "CRITICAL: What is this line's orientation *relative to the local grid*? Choose one: ['parallel_to_primary', 'perpendicular_to_primary', 'unrelated']"
                 }
             })
@@ -3924,7 +3919,7 @@ def _rescale_endpoints_to_original(endpoints, scale_xy):
         return [[_rr(x1, sx), _rr(y1, sy)], [_rr(x2, sx), _rr(y2, sy)]]
     except Exception:
         return endpoints
-
+    
 def _reject_merge_copying(code: str) -> str | None:
     """
     'merge 픽셀 복사'를 유발하는 위험 패턴을 정규식으로 차단.
@@ -4670,7 +4665,7 @@ def _safe_invoke_gptoss_for_code_from_sdiff(
     resp2 = llm.invoke(messages)
     code2 = _extract_text_from_aimessage(resp2).strip()
     return _strip_code_fence(code2)
-        
+
 # [NEW] SDIFF -> GPT-OSS 직접 생성 엔드포인트
 @app.post("/gptoss/generate_from_sdiff")
 async def gptoss_generate_from_sdiff(payload: dict = Body(...)):
