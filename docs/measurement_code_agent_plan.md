@@ -1,6 +1,6 @@
 # 스크리블 기반 측정 코드 생성 Agent — 시스템 개발 계획서
 
-> **문서 버전** v1.0
+> **문서 버전** v1.4 — v1.0 최초 작성 → v1.1 모델 API 통합(Part 5) → v1.2 OpenAI 개발 프로파일 → v1.3 실표시 샘플 분석(2.4, F-80~F-98) → v1.4 전체 정합성 정리
 > **대상 저장소** `sy5255/ai_agent_project` (as-is 분석) → 신규 시스템(to-be) 설계
 > **한 줄 정의** 사용자가 이미지 위에 **그림판처럼 스크리블(선)을 그리면**, 시스템이 그 **측정 의도(intent)를 복원·보정·확정**하고, 그 의도를 **다른 이미지에도 그대로 적용 가능한 파이썬 측정 스크립트**로 자동 생성·검증·배포하는 Agent.
 
@@ -8,7 +8,7 @@
 
 ## 목차
 
-- [Part 0. 문서의 목적과 읽는 법](#part-0-문서의-목적과-읽는-법)
+- [Part 0. 문서의 목적과 읽는 법](#part-0-문서의-목적과-읽는-법) · [0.1 용어집](#01-용어집)
 - [Part 1. 기존 시스템(As-Is) 완전 분석](#part-1-기존-시스템as-is-완전-분석)
 - [Part 2. 신규 시스템(To-Be) 컨셉과 아키텍처 (+ 실제 샘플 분석)](#part-2-신규-시스템to-be-컨셉과-아키텍처)
 - [Part 3. 전체 기능 명세 (F-01 ~ F-98)](#part-3-전체-기능-명세)
@@ -34,6 +34,31 @@ Part 3의 기능들은 모두 `F-xx` 번호를 가진다. (F-01~F-58은 제품 �
 - `P0` — MVP 필수. 이것이 없으면 시스템이 성립하지 않음.
 - `P1` — 실사용 품질 확보에 필요. MVP 직후 착수.
 - `P2` — 고도화/차별화. 여유가 생기면 착수.
+
+## 0.1 용어집
+
+| 용어 | 뜻 | 어디서 정의되나 |
+|---|---|---|
+| **SDIFF** | 기존 시스템의 명세 JSON (Structured Diff). 신규 시스템에서는 MIR로 대체 | 1.2 |
+| **MIR** | Measurement Intent Representation. 신규 시스템의 단일 진실원 | F-15, 4.1 |
+| **엔티티(entity)** | 사용자가 그은 획 하나가 의미로 승격된 것. `layer`(guide/measure/aux) × `kind` 2축 | F-80 |
+| **kind** | 엔티티의 역할. `reference_line` / `offset_guide` / `level_marker` / `primary_axis` / `segment` / `interval` / `tick` / `roi` | F-80 |
+| **데이텀(datum)** | 측정의 기준이 되는 선·면 | F-82 |
+| **오프셋 가이드(offset guide)** | 두 기준선을 잇는 빨간 획. **길이 자체가 파생 기준선의 정의**. 출력 측정값은 아니다 | F-80, 2.4.5 ① |
+| **기준선 체인(datum chain)** | `base → offset_guide → derived` 의 사슬. 루트만 실제 앵커를 가짐 | F-94 |
+| **컷라인(cut line)** | 특정 높이에 놓인 측정 기준면. 그 위를 스캔해 구간을 얻는다 | F-81 |
+| **라인스캔 구간(interval)** | 컷라인을 따라 클래스가 연속으로 나타나는 1차원 구간. 폭이 곧 CD | F-81 |
+| **끝점 앵커(endpoint anchor)** | 계측선 끝점이 무엇에 붙었는지. **G**(가이드 수직 종속) / **C**(클래스 경계) / **I**(가이드 위 구간) 3유형 | F-97 |
+| **방향 한정자(qualifier)** | 유형 C에서 "클래스의 어느 쪽 가장자리인가". `topmost` / `first_crossing` 등 | F-98 |
+| **카디널리티(cardinality)** | 측정 개수 정책. `fixed` / `per_instance` / `all_occurrences` | F-83 |
+| **스냅(snap)** | 끝점이 의미 있는 대상에 자석처럼 붙는 것. **붙은 대상이 구조화 기록되는 것이 본질** | F-06 |
+| **plan** | MIR을 연산자 조합으로 옮긴 중간 표현. LLM이 내는 것은 코드가 아니라 이것 | F-30 |
+| **연산자(op)** | `metro_ops` 라이브러리의 검증된 순수 함수. plan은 이것들의 조합 | F-23 |
+| **시연 재현 검증(demo replay)** | 생성 코드를 시연 이미지에 돌려 사용자가 그린 선을 재현하는지 확인 | F-36 |
+| **전이 신뢰도(transfer reliability)** | 변형·다른 이미지에서도 살아남는지 | F-37 |
+| **배포 프로파일(deployment profile)** | `dev_openai`(사외 셋업) / `onprem`(사내 운영). 모델 배선 전체를 결정 | F-73, 5.5 |
+| **능력 하한(capability floor)** | OpenAI를 써도 사내 모델 수준으로 낮춰 동작시키는 설정 | F-75 |
+| **τ_dist / τ_angle** | 스냅·공선 판정의 상대 임계. 절대 픽셀 상수를 대체 | F-89 |
 
 ---
 
@@ -246,7 +271,7 @@ meta_tag, component_label, image_name, run_id, note
 
 ## 2.4 ★ 실제 계측 표시 샘플 분석 — 설계에 반영한 추가 발견
 
-실제 사용자 표시 이미지 2장을 픽셀 단위로 계측한 결과, **기존 설계(Part 1 분석 시점)가 전제하지 못했던 구조**가 여러 개 드러났다. 이 절의 발견은 Part 3의 **그룹 H (F-80 ~ F-93)** 로 정식 기능화된다.
+실제 사용자 표시 이미지 2장을 픽셀 단위로 계측한 결과, **기존 설계(Part 1 분석 시점)가 전제하지 못했던 구조**가 여러 개 드러났다. 이 절의 발견은 Part 3의 **그룹 H (F-80 ~ F-98)** 로 정식 기능화된다.
 
 ### 2.4.1 샘플 A — 다중 높이 CD 측정 (327 × 167 px)
 
@@ -356,6 +381,19 @@ meta_tag, component_label, image_name, run_id, note
 - `connectedComponents` 기반 인스턴스 분리가 실패한다 → 프로파일/워터셰드 분할 필요 (**F-87**)
 - "기판 표면"을 수평 직선으로 놓으면 틀린다 → **곡선 데이텀 피팅**과 **인스턴스별 국소 기준** 필요 (**F-88**, **F-86**)
 
+### 2.4.4 그 외 UI/UX 관측
+
+| 관측 | 시사점 |
+|---|---|
+| 선 두께 3 px, 배경 gray 13~50의 **저대비 어두운 이미지** | 얇은 선이 잘 안 보인다 → 스트로크 아웃라인(헤일로), 두께 조절, 격리(isolate) 모드 필요 (**F-91**) |
+| 의미 인코딩이 **오직 빨강/초록** | 적록색약(남성 약 8%)은 구분 불가 → 모양·점선 패턴 병행 인코딩 + 대체 팔레트 (**F-91**) |
+| 327 px 폭에 초록 구간 12개 + 기준선 4개 | 화면 맞춤 배율에서 라벨이 충돌한다 → LOD 디클러터링 + 측정 목록 패널 (**F-92**) |
+| y=137 과 y=142 의 **5 px 간격 근접 쌍** | 두 개의 별개 기준선인지 한 선의 중복인지 모호 → 중복/근접 경고 (**F-55** 확장) |
+| 초록 구간 내부는 gray 50(기둥), 사이는 gray 13~17(배경) | 구간의 내부 클래스로 **CD인지 Space인지 자동 판별·명명 가능** (**F-93**) |
+| 두 샘플의 크기(327×167 vs 154×153)와 측정 방향(수평 폭 vs 수직 깊이)이 완전히 다름 | 종횡비·방향에 의존하는 few-shot 검색은 실패 → 구조 유사도 기반 검색(F-32)의 필요성 재확인 |
+
+---
+
 ### 2.4.5 ★★ 사용자 확인으로 밝혀진 두 가지 핵심 구조
 
 앞의 픽셀 계측만으로는 판단할 수 없던 두 지점을 사용자에게 확인해 확정했다. **둘 다 시스템의 중심 자료구조를 바꿀 만큼 중요하다.**
@@ -423,20 +461,6 @@ meta_tag, component_label, image_name, run_id, note
 5. **기존 시스템은 G와 C만 구분하려 했다.** SDIFF의 `final_class_hint_start` / `final_class_hint_end` 는 값의 **타입**으로 둘을 갈랐다 — 문자열 ID(`"red_1"`)면 가이드라인(유형 G), 숫자(`10`)면 클래스(유형 C). 코드 생성 프롬프트에도 *"힌트 타입 분기: 문자열 ID면 project_point_onto_line, 숫자면 findContours"* 라는 규칙이 있었다.
    → 방향은 맞았으나 (a) **유형 I가 없고**, (b) 방향 한정자가 없고, (c) 타입을 값의 형태로 암묵 인코딩해 검증이 불가능했다. 신규 시스템은 이를 **명시적 열거형**으로 정식화한다.
 
-
-### 2.4.4 그 외 UI/UX 관측
-
-| 관측 | 시사점 |
-|---|---|
-| 선 두께 3 px, 배경 gray 13~50의 **저대비 어두운 이미지** | 얇은 선이 잘 안 보인다 → 스트로크 아웃라인(헤일로), 두께 조절, 격리(isolate) 모드 필요 (**F-91**) |
-| 의미 인코딩이 **오직 빨강/초록** | 적록색약(남성 약 8%)은 구분 불가 → 모양·점선 패턴 병행 인코딩 + 대체 팔레트 (**F-91**) |
-| 327 px 폭에 초록 구간 12개 + 기준선 4개 | 화면 맞춤 배율에서 라벨이 충돌한다 → LOD 디클러터링 + 측정 목록 패널 (**F-92**) |
-| y=137 과 y=142 의 **5 px 간격 근접 쌍** | 두 개의 별개 기준선인지 한 선의 중복인지 모호 → 중복/근접 경고 (**F-55** 확장) |
-| 초록 구간 내부는 gray 50(기둥), 사이는 gray 13~17(배경) | 구간의 내부 클래스로 **CD인지 Space인지 자동 판별·명명 가능** (**F-93**) |
-| 두 샘플의 크기(327×167 vs 154×153)와 측정 방향(수평 폭 vs 수직 깊이)이 완전히 다름 | 종횡비·방향에 의존하는 few-shot 검색은 실패 → 구조 유사도 기반 검색(F-32)의 필요성 재확인 |
-
----
-
 # Part 3. 전체 기능 명세
 
 각 기능은 **무엇을 / 왜 / 어떻게 동작하고 / 어떻게 구현하는가**로 기술한다.
@@ -465,6 +489,7 @@ meta_tag, component_label, image_name, run_id, note
 - **무엇** 초록 선을 그리는 동안 길이가 **nm 단위로 실시간 표시**되고, 시작/끝점이 놓인 **클래스 이름**이 함께 뜬다. (`43.2 nm  [poly → SiN]`)
 - **왜** 잘못 그은 것을 **그 자리에서** 알 수 있다. 코드 생성까지 가서야 발견하는 낭비를 없앤다.
 - **구현** meta의 `pixel_scale_um_x/y`로 즉시 환산. 끝점 클래스는 마스크 배열에서 반경 샘플링(최빈값).
+- **★ 비정방 픽셀(x 스케일 ≠ y 스케일) 처리** 수평·수직 측정은 각 축 스케일을 쓰면 되지만, **사선 측정은 축별로 환산한 뒤 합성**해야 한다: `L_nm = hypot(Δx·scale_x, Δy·scale_y)`. `L_px × scale_x` 로 계산하면 사선에서 조용히 틀린다. `pixel_scale_um_x ≠ pixel_scale_um_y` 인 경우 **캔버스에 경고 배지**를 띄우고, 각도 스냅(0/45/90°)도 **물리 각도 기준**으로 계산한다.
 
 ### F-05. Undo/Redo · 자동저장 · 스크리블 버전 `P0`
 - 커맨드 패턴 기반 무제한 undo. 5초 주기 자동저장. 스크리블은 세션마다 버전으로 남고 diff 비교 가능.
@@ -512,7 +537,7 @@ meta_tag, component_label, image_name, run_id, note
   - 기준선을 그었는데 근처에 "가장 어두운 클래스 영역 4개의 최상단 점들"이 거의 일직선이면 → *"이 4점에 피팅한 직선"* 을 제안. (기존 시스템이 VLM에게 자연어로 물어보던 `construction_method`를 **CV로 직접 제안**)
   - 측정선을 그었는데 끝점이 경계에서 2px 떠 있으면 → 경계로 당기고 *"경계에 스냅함"* 배지 표시.
   - 측정선이 클래스 A와 B의 경계를 지나면 → *"A→B 두께"* 라는 의미 라벨 자동 부여.
-- **구현** 스트로크 주변 밴드(±20px) 내 클래스별 픽셀 통계 + 컨투어 교차 분석 → 후보 해석 생성.
+- **구현** 스트로크 주변 밴드(F-89의 `밴드 폭` 상대 임계) 내 클래스별 픽셀 통계 + 컨투어 교차 분석 → 후보 해석 생성.
 
 ### F-09. 제약 조건 인스펙터 (Constraint Inspector) `P0`
 - **무엇** 선 하나를 선택하면 우측 패널에 **그 선의 의미가 편집 가능한 폼**으로 뜬다.
@@ -539,7 +564,7 @@ meta_tag, component_label, image_name, run_id, note
 - **구현**
   1. 사용자 스트로크 주변 패치를 템플릿으로 삼아 **정규화 상호상관(NCC) 매칭** → 피크 검출.
   2. 병행 검증: 클래스 마스크의 **행/열 프로파일 자기상관(autocorrelation)** 으로 주기 추정.
-  3. 연결요소(connected components) 기반 인스턴스 분할로 반복 단위 확정.
+  3. 인스턴스 분할로 반복 단위 확정 — **연결요소 단독으로는 부족하다**(붙어 있는 구조에서 1개로 세어진다). F-87의 프로파일/워터셰드/주기 분할 앙상블을 쓰고, 가능하면 라인스캔 구간(F-81)을 인스턴스로 삼는다.
   4. 결과를 MIR의 `patterns[]`에 `periodic_1d{axis, period, count, instances[]}`로 기록 → 각 측정은 `roi: finger[i]`로 인스턴스를 참조.
 - **★ 전파는 기하 위치만 복제하고, 끝점 앵커는 각각 재확인한다.** 사용자 확인에 따르면 겉보기에 같은 그룹의 계측선이라도 **끝점이 붙는 클래스가 서로 다를 수 있다**(샘플 B: 하나는 가장 밝은 클래스, 하나는 가장 어두운 클래스). 전파된 선의 끝점 앵커에는 `inherited` 표시를 달고, 실제 스냅 결과와 어긋나면 즉시 경고한다. (F-97)
 - **왜** 시연 비용이 N배 줄고, 무엇보다 **"반복 구조를 순회하라"는 논리가 코드에 정확히 반영**된다. (기존 시스템이 프롬프트로 "zip 구조를 버리고 3쌍으로 묶어라"고 설득하던 문제의 근본 해결)
@@ -561,7 +586,7 @@ meta_tag, component_label, image_name, run_id, note
 
 ### F-15. ★ MIR — Measurement Intent Representation `P0`
 - **무엇** 시스템의 단일 진실원(single source of truth). 버전 있는 JSON 스키마.
-- **구성** `image_context` / `classes` / `frames`(좌표계) / `patterns` / `rois` / `anchors` / `measurements` / `groups` / `constraints` / `provenance` / `confidence`. (전체 스키마는 Part 4)
+- **구성** `image_context` / `classes` / `patterns` / `frames`(좌표계) / **`entities`**(빨강 가이드라인의 kind별 정의, F-80) / **`datum_chains`**(기준면 계보, F-94) / **`cut_lines`**(F-81) / `anchors`(공유 앵커만) / `measurements`(**`endpoint_anchors`** 포함, F-97) / `constraints` / `clarifications` / **`demo_strokes`**(원본 시연 + 스냅 + 순서, F-95) / `provenance` / `confidence`. (전체 스키마는 [Part 4.1](#41-mir-measurement-intent-representation--요약-스키마))
 - **왜** SDIFF가 하려던 일을 **검증 가능하고, 편집 가능하고, 왕복 가능한** 형태로 정식화.
 - **구현** Pydantic v2 모델 → JSON Schema 자동 생성 → 프런트/백엔드 공용 검증. 스키마 버전 필드 + 마이그레이션 함수 체인.
 
@@ -570,8 +595,10 @@ meta_tag, component_label, image_name, run_id, note
 - **왜** UI가 "이건 AI 추측입니다(노란 배지)" / "이건 당신이 직접 지정했습니다(파란 배지)"를 구분해 보여줄 수 있고, 저신뢰 필드만 골라 사용자에게 확인 요청(F-18)할 수 있다.
 
 ### F-17. 자연어 되읽기 (Intent Read-back) `P0`
-- **무엇** MIR을 사람 문장으로 번역해 확인받는다.
-  > *"가장 어두운 클래스(값 10)로 이루어진 핑거 4개 각각에 대해, 핑거 최상단 점에서 시작해 주축 red_1의 법선 방향으로 진행하여 중간계조 클래스(값 30)의 첫 경계까지의 거리를 측정합니다. 총 4개 측정, 이름 Gate_CD, 예상 범위 35~55 nm."*
+- **무엇** MIR을 사람 문장으로 번역해 확인받는다. **문장에는 기준선 계보(F-94)와 끝점 앵커 유형(F-97)이 반드시 포함**된다 — 이 둘이 틀리면 값은 나오지만 다른 것을 재기 때문이다.
+  > **[기준면]** *"기준선 #2 는 **구조 최상단에서 아래로 128.9 nm** 지점입니다. (근거: 오프셋 가이드 x=158, 체인 1단계)"*
+  > **[측정]** *"그 기준면 위에서, `poly` 클래스가 나타나는 **모든 구간의 폭**을 왼쪽부터 순서대로 잽니다. 시연 이미지에서는 6개였지만 **개수는 이미지마다 달라집니다.** 이름 `poly_CD_at_B`."*
+  > **[측정]** *"핑거 4개 각각에 대해, **시작점은 기준선 #1 위로 수직 투영**하고, **끝점은 `poly` 클래스 경계 중 진행 방향으로 처음 만나는 것**입니다. 이름 Gate_CD, 예상 범위 35~55 nm."*
 - **왜** 코드 리뷰보다 훨씬 빠른 검수 수단. 오해를 코드 생성 **이전에** 잡는다.
 - **구현** 1차는 **템플릿 기반 결정론적 문장 생성**(모델 불필요, 항상 정확). 2차로 LLM이 자연스럽게 다듬기(선택).
 
@@ -583,7 +610,7 @@ meta_tag, component_label, image_name, run_id, note
 - **왜** 기존 시스템은 애매하면 **조용히 추측**했고, 그 결과 잘못된 코드가 나와 사람이 뒤늦게 발견했다.
 - **구현** 규칙 기반 감지기 세트:
   - 상위 2개 스냅 후보 점수차 < 0.1
-  - 끝점이 어느 클래스 경계에서도 5px 이상 떨어짐
+  - 끝점이 어느 클래스 경계에서도 `3 × τ_dist` 이상 떨어짐 (F-89 상대 임계)
   - 측정선 방향이 어떤 기준선과도 평행/수직이 아님(±10° 밖)
   - 반복 패턴 인스턴스 수와 그린 선 개수가 불일치
   - 실측값이 기대 범위 밖 또는 그룹 내 편차 > 20%
@@ -643,6 +670,8 @@ meta_tag, component_label, image_name, run_id, note
   3. **특징 정합**: ORB/SIFT + RANSAC → 유사변환(translation+scale+rotation) 추정.
   4. **전역 정렬**: 클래스별 무게중심/주축 정렬(위상 상관).
 - 각 단계는 **신뢰도 점수**를 내고, 임계 미달이면 다음 단계로. 전부 실패하면 해당 이미지는 `NEEDS_REVIEW`로 분류(조용한 오측정 금지).
+- **★ 기준선 체인이 재정위 부담을 크게 줄인다 (F-94).** 기준면이 `offset_from(구조 최상단, 128.9 nm)` 처럼 **구조에 상대적으로 정의**되어 있으면, 새 이미지에서는 구조 최상단만 다시 찾으면 기준면이 자동으로 따라온다. 좌표를 통째로 옮기는 재정위가 필요한 것은 **체인 루트의 앵커 하나뿐**이다.
+  → 따라서 폴백 체인의 1순위(구조 기반)가 곧 "체인 루트 재검출"이고, 2~4순위는 그것이 실패했을 때의 보험이다.
 - **왜** 기존 시스템의 가장 잦은 실패 원인이 "ROI가 (0,0) 근처로 몰림"이었다. 이는 단일 수단(템플릿 매칭)에 전량 의존한 결과다.
 
 ### F-26. 반복/대칭 구조 검출기 `P0`
@@ -693,6 +722,18 @@ meta_tag, component_label, image_name, run_id, note
 - **탈출구(Escape hatch)** 기존 연산자로 표현 불가능한 요구는 `custom_step`으로 자유 코드 생성을 허용하되, 반드시 F-33 정적 검증 + F-36 재현 검증을 통과해야 하고, 승인 시 F-41 라이브러리 승격 후보가 된다.
 
 ### F-31. 결정론적 코드 렌더러 `P0`
+- **★ MIR → 연산자 매핑은 결정론적이다.** 아래 대응은 LLM이 고르는 것이 아니라 렌더러가 **표로 찾아 쓴다.** 이것이 기존 시스템의 프롬프트 규칙("문자열 ID면 project_point_onto_line, 숫자면 findContours")을 대체한다.
+
+  | MIR 노드 | 렌더링되는 연산자 |
+  |---|---|
+  | `endpoint_anchors.*.type = guide_perpendicular` | `projection(pt, line)` — 해당 `ref` 엔티티의 직선 위로 투영 |
+  | `endpoint_anchors.*.type = class_edge` | `qualifier` 에 따라 `extreme_point(dir)` / `first_crossing()` / `farthest_point()` … + `robust` 래핑 |
+  | `endpoint_anchors.both.type = on_guide_interval` | `line_scan_intervals(cut_line, class)` → 구간 리스트 (개수는 런타임 결정) |
+  | `entities[].kind = offset_guide` | 코드에는 **선으로 그려지지 않는다.** 파생 기준선의 `offset_from(base, d)` 계산으로만 나타난다 |
+  | `datum_chains[]` | 루트 앵커 계산 → 링크 순서대로 `offset_from` 누적. 순환은 검증 단계에서 이미 배제됨 |
+  | `cardinality = all_occurrences` | 고정 길이 루프가 아니라 **구간 리스트 순회**, `index` 는 `index_order` 규칙으로 부여 |
+  | `constraints[].coincident_with` | 계산된 점을 대상 직선에 투영하는 한 줄이 추가됨 |
+
 - 산출 스크립트의 고정 골격: `argparse(--mask_path --out_dir --meta_root)` → `meta_utils`로 스케일/클래스 로드 → 재정위(F-25) → 측정 루프 → `measurements.csv`(표준 헤더) + `overlay.png` + `roi_debug.png` + `run.json`.
 - 코드 스타일 고정(black), 난수 시드 고정, 모든 수치 `float()/int()` 캐스팅, 예외 시 종료 코드/사유 표준화.
 
@@ -742,7 +783,7 @@ meta_tag, component_label, image_name, run_id, note
   - 길이 상대 오차 (%)
   - 각도 차이 (°)
   - 그룹/이름 매칭 정확도
-- **판정** 기본 임계: 끝점 평균 ≤ 3px, 길이 오차 ≤ 3%, **개수 100% 일치**. 미달 시 F-35로 diff를 피드백해 자동 재시도.
+- **판정** 기본 임계: 끝점 평균 ≤ `재현 허용 오차`(F-89 상대 정의, 샘플 A 기준 ≈3 px), 길이 오차 ≤ 3%(비율이므로 스케일 불변), **개수 100% 일치**. 미달 시 F-35로 diff를 피드백해 자동 재시도.
   - **시연 이미지에서는 `all_occurrences` 라도 개수가 정확히 맞아야 한다.** 6개를 그렸는데 7개가 나오면 기준면 위치나 최소 구간 필터가 틀린 것이다. (전이 단계에서만 개수 변화를 허용한다 — F-83)
   - **`offset_guide` 는 측정값이 아니므로 비교 대상에서 제외**하되, 그것이 정의한 기준선의 위치가 재현되었는지는 별도로 검사한다.
 - **왜** *"실행이 성공했다"* 와 *"내가 의도한 것을 쟀다"* 는 완전히 다른 문제다. 후자를 자동 판정할 수 있게 되면 사람의 검수 부담이 급감한다.
@@ -750,7 +791,7 @@ meta_tag, component_label, image_name, run_id, note
 
 ### F-37. ★ 전이 신뢰도 게이트 (Transfer Reliability) `P0`
 - 기존 `validation/transfer_reliability_eval.py`를 **파이프라인 내부 서비스로 승격**.
-- **결정론적 augmentation**: shift(±200px), rotate(±1~2°), scale(0.9~1.03), shear(±0.02) + **랜덤 조합 N종**(기본 30, 시드 고정) + 노이즈/밝기 변화 옵션.
+- **결정론적 augmentation**: shift(**짧은변의 ±12%**, F-89), rotate(±1~2°), scale(0.9~1.03), shear(±0.02) + **랜덤 조합 N종**(기본 30, 시드 고정) + 노이즈/밝기 변화 옵션.
 - **홀드아웃 실이미지**: 같은 공정의 다른 이미지 5~20장에도 실행.
 - **산출 지표**
   - 실행 성공률
@@ -871,6 +912,28 @@ meta_tag, component_label, image_name, run_id, note
 
 > 실제 사용자 표시 샘플 분석([2.4](#24--실제-계측-표시-샘플-분석--설계에-반영한-추가-발견))에서 도출된 기능군. 그룹 A~D의 세부 요구사항을 구체화·수정한다.
 
+| # | 기능 | 우선순위 | 근거 |
+|---|---|---|---|
+| F-80 | **주석 엔티티 모델 (레이어 × kind 2축)** | P0 | 2.4.3 ① |
+| F-81 | **측정 기준면(Cut Line) · 라인스캔** | P0 | 2.4.3 ② |
+| F-82 | **데이텀 오프셋 확정 (체인 루트 질문)** | P0 | 2.4.3 ③ |
+| F-83 | 가변 카디널리티 측정 | P0 | 2.4.3 ④ |
+| F-84 | 공선·부착 제약 자동 추론 | P0 | 2.4.5 ② |
+| F-85 | 캘리퍼 틱 · 터미네이터 인식 | P1 | 2.4.4 |
+| F-86 | 인스턴스별 로컬 프레임 | P1 | 2.4.3 ⑧ |
+| F-87 | 연결된 구조의 인스턴스 분리 | P1 | 2.4.3 ⑧ |
+| F-88 | 곡선 데이텀 · 국소 기준면 | P1 | 2.4.3 ⑧ |
+| F-89 | **스케일 불변 임계값 정책** | P0 | 2.4.3 ⑦ |
+| F-90 | 겹치는 주석의 렌더링 · 선택 · 오클루전 | P0 | 2.4.3 ⑤ |
+| F-91 | 저대비 가독성 · 색각 접근성 | P1 | 2.4.4 |
+| F-92 | 측정 목록 패널 · 라벨 LOD | P1 | 2.4.4 |
+| F-93 | 구간 내부 클래스 자동 분류 · 명명 | P1 | 2.4.4 |
+| F-94 | **기준선 체인 · 의존 그래프** | P0 | 2.4.5 ① |
+| F-95 | **스트로크 순서 = 의존 방향** | P0 | 2.4.5 ① |
+| F-96 | 오프셋 값 nm 정규화 | P1 | 2.4.5 ① |
+| F-97 | **끝점 앵커 3유형 분류** | P0 | 2.4.5 ② |
+| F-98 | 방향 한정자 · 대상 클래스 | P0 | 2.4.5 ② |
+
 ### F-80. ★ 주석 엔티티 모델 — 색(레이어) × 역할(kind) 2축 `P0`
 
 - **대원칙은 유지한다.** **빨강 = 가이드라인, 초록 = 실제 계측선.** 출력 `measurements.csv` 에 값으로 기록되는 것은 **초록뿐**이다. 이것은 SDIFF의 `red_lines_detail` / `green_lines_detail` 구분과 동일하며 바뀌지 않는다.
@@ -879,7 +942,7 @@ meta_tag, component_label, image_name, run_id, note
   | 레이어 | kind | 끝점의 의미 | 코드에서의 쓰임 | 샘플 |
   |---|---|---|---|---|
   | 🔴 guide | `reference_line` | **비의미적** — 위치·방향만 | 좌표계 축 / 컷라인의 위치 | A: y=14, 80, 137, 142 |
-  | 🔴 guide | `offset_guide` | **길이가 곧 값** | 다른 기준선의 상대 위치를 정의 | **A: x=158, 66 px** |
+  | 🔴 guide | `offset_guide` | **길이가 곧 값** | 다른 기준선의 상대 위치를 정의 | **A: x=158(66 px), x=159(5 px)** |
   | 🔴 guide | `level_marker` | 비의미적 (레벨만) | 짧게 그은 기준 높이 표시 | B: 9 px 빨간 선 |
   | 🔴 guide | `primary_axis` | 비의미적 | LCS 주축 (기울어진 구조용) | — |
   | 🟢 measure | `segment` | **의미적 — 이것이 측정값** | 2점 간 거리 | B: 수직 3개 |
@@ -916,8 +979,8 @@ meta_tag, component_label, image_name, run_id, note
 - **무엇** 기준선을 그으면 **그 위치가 무엇에 대해 정의되는지**를 확정하기 전에는 MIR을 완성하지 않는다.
 - **질문 형태** (F-18의 표적 질문 중 가장 우선순위가 높다)
   > *"이 기준선의 높이는 무엇을 기준으로 하나요?"*
-  > `(A) 기둥 최상단에서 아래로 66 px (= 131 nm)` ← 다른 주석이 그 거리를 명시하고 있으면 **1순위 제안**
-  > `(B) 기판 표면에서 위로 87 px`
+  > `(A) 기둥 최상단에서 아래로 66 px (= 128.9 nm)` ← 다른 주석이 그 거리를 명시하고 있으면 **1순위 제안**
+  > `(B) 기판 표면에서 위로 62 px (= 121.1 nm)`
   > `(C) 이미지 절대 좌표 y=80` ← **선택하면 "이 레시피는 일반화되지 않습니다" 경고**
   > 각 선택지에 해당 데이텀이 캔버스에 하이라이트된다.
 - **오프셋 가이드가 있으면 묻지 않는다.** 기준선과 직교하며 양 끝이 다른 기준선(또는 구조 경계)에 닿는 빨간 획은 **`offset_guide`(F-80)** 이고, 그 길이가 곧 오프셋 정의다. 샘플 A의 x=158 선이 정확히 이 경우이므로 시스템은 *"기준선 B = 기준선 A에서 아래로 66 px"* 를 **읽어내기만 하면 된다**. 이때는 질문 대신 **확인 배지**만 띄운다.
@@ -934,7 +997,7 @@ meta_tag, component_label, image_name, run_id, note
 
   | `cardinality` | 의미 | 새 이미지에서 |
   |---|---|---|
-  | `fixed(n)` | 정확히 n개 | n개가 아니면 실패 |
+  | `fixed(n)` | 정확히 n개 | n개가 아니면 실패 — **구조 개수가 공정 스펙으로 고정된 경우에만** 쓴다(예: "게이트는 항상 4개"). 확신이 없으면 쓰지 않는다 |
   | `per_instance` | 패턴 인스턴스마다 1개 | 인스턴스 수만큼 |
   | `all_occurrences` | 기준선 위 모든 구간 | **개수가 데이터로 결정됨** |
 
@@ -945,7 +1008,7 @@ meta_tag, component_label, image_name, run_id, note
 
 ### F-84. 공선·부착 제약 자동 추론 `P0`
 
-- **무엇** 손으로 그은 측정선이 기준선에서 1~3 px 벗어난 것을 **오차가 아니라 의도(같은 높이)** 로 해석해 제약으로 승격한다.
+- **무엇** 손으로 그은 측정선이 기준선에서 `τ_dist`(F-89, 샘플 A 기준 ≈1.5 px) 이내로 벗어난 것을 **오차가 아니라 의도(같은 높이)** 로 해석해 제약으로 승격한다.
 - **추론 규칙** 측정선이 기준선과 (a) 각도 차 ≤ τ_angle, (b) 거리 ≤ τ_dist (상대값, F-89) 이면 → `constraint: coincident_with(datum)` 를 자동 부여하고 좌표를 기준선에 투영한다. 배지로 표시하며 사용자가 해제할 수 있다.
 - **왜** 2 px 편차를 그대로 두면 **모든 측정에 계통 오차(systematic bias)** 가 들어간다. 기존 시스템의 `rules: {green_on_red: true, nudge_if_touching: true}` 가 하려던 일이며, 이를 명시적 제약으로 정식화한다.
 - **제약 종류** `coincident_with` / `perpendicular_to` / `parallel_to` / `endpoint_on` / `offset_from`. 모두 MIR `constraints[]` 에 기록되고 코드 생성에 그대로 반영된다.
@@ -953,7 +1016,17 @@ meta_tag, component_label, image_name, run_id, note
 ### F-85. 캘리퍼 틱 · 터미네이터 인식 `P1`
 
 - **무엇** 선 끝에 짧게 그은 직교 획(T자 표식)을 **별개 엔티티가 아니라 부착 장식**으로 인식한다.
-- **판정** 길이가 상대 임계 이하 + 인접 선의 끝점 근처 + 그 선과 거의 직교 → `tick`, 해당 선에 부착.
+- **판정** 길이가 상대 임계 이하 + 인접 선의 **끝점** 근처 + 그 선과 거의 직교 → `tick`, 해당 선에 부착.
+- **★ `offset_guide` 와의 충돌 해소 (필수)** 샘플 A의 5 px 오프셋 가이드(x=159)와 캘리퍼 틱은 **둘 다 짧고 둘 다 직교**해서 혼동된다. 실제로 이 둘을 잘못 가르면 기준선 체인이 통째로 깨진다. **판정 순서를 고정한다.**
+
+  | 순위 | 조건 | 판정 |
+  |---|---|---|
+  | 1 | 양 끝이 **서로 다른 두 획**에 각각 닿음 | **`offset_guide`** (F-80) — 길이가 값 |
+  | 2 | 한쪽 끝만 다른 획의 **끝점**에 닿고, 반대쪽은 허공 | `tick` |
+  | 3 | 한쪽 끝이 다른 획의 **중간**에 닿고 반대쪽은 허공 | 미확정 → F-18 질문 |
+  | 4 | 어느 획에도 닿지 않음 | `level_marker` 후보 (초록 측정의 시작 레벨과 정렬되면 확정) |
+
+  즉 **"몇 개의 획에 닿았는가"가 1차 판별자**이고 길이는 부차적이다. 길이를 1차 기준으로 삼으면 5 px 오프셋 가이드가 틱으로 삼켜진다.
 - **왜** 기존 시스템은 이런 짧은 획을 (a) 길이 필터로 삭제하거나 (b) 별개의 측정선으로 오인했다. 둘 다 틀렸다. 틱은 **끝점 위치를 더 정확히 알려주는 신호**이므로, 부착 후 그 위치를 끝점 스냅의 강한 근거로 사용한다.
 
 ### F-86. 인스턴스별 로컬 프레임 `P1`
@@ -995,7 +1068,31 @@ meta_tag, component_label, image_name, run_id, note
 
 - **왜 P0인가** 샘플 B의 빨간 기준선은 **9 px × 3 px ≈ 27 px² / 길이 9 px** 이다. 기존 코드의 `contourArea < 30` 과 `length < 10` **두 필터 모두에 걸려 조용히 삭제된다.** 즉 기존 파이프라인은 이 이미지의 기준선을 아예 인식하지 못한다. 절대 상수 하나가 레시피 전체를 무의미하게 만든 실증 사례다.
 - **구현** 임계값을 코드에 흩지 않고 `metro_ops/thresholds.py` 의 `Thresholds(image_shape, feature_scale)` 객체로 주입한다. 리터럴 픽셀 상수는 **린트 규칙으로 차단**한다.
-- **인수 조건** 동일 장면을 4배로 리사이즈해도 검출된 엔티티의 종류·개수가 동일하다.
+- **인수 조건** 동일 장면을 0.5× / 1× / 4× 로 리사이즈해도 검출된 엔티티의 종류·개수가 동일하다.
+
+#### ★ 적용 범위와 예외 — "px 금지"는 임계값에만 적용된다
+
+이 규칙이 문서 전체에 일관되게 읽히도록 세 범주를 구분한다.
+
+| 범주 | px 사용 | 예 |
+|---|---|---|
+| **임계값 (threshold)** | ❌ **금지** — 반드시 `Thresholds` 경유 | 스냅 반경, 공선 판정 거리, 노이즈 필터, 최소 구간 길이, 재현 검증 허용 오차 |
+| **기록값 (measurement)** | ✅ 허용 | `snaps[].dist_px`, `fit.rms_px`, 실측 길이, 검증 리포트의 실제 오차 |
+| **문서·UI 표기** | ✅ 허용 (환산값) | 본문 예시의 "≤ 3 px", UI 메시지 "길이 42px로는…" |
+
+> **문서 표기 규약** 이 문서에서 임계값을 px로 적은 곳(예: F-36의 "끝점 평균 ≤ 3 px", F-84의 "1~3 px", F-18의 "5 px 이상")은 모두 **샘플 A(327×167) 기준으로 환산한 예시값**이다. 구현에서는 아래 상대 정의를 쓴다.
+>
+> | 문서 표기 | 상대 정의 |
+> |---|---|
+> | 스냅/공선 판정 거리 `τ_dist` | `max(1.5 px, 0.9% × short_side)` — 샘플 A에서 ≈1.5 px |
+> | 재현 검증 끝점 허용 오차 (F-36/K4) | `max(2 px, 1.8% × short_side)` — 샘플 A에서 ≈3 px |
+> | 모호성 판정 "경계에서 떨어짐" (F-18) | `3 × τ_dist` |
+> | 마스크 인식 밴드 폭 (F-08) | `max(8 px, 12% × 구조 특징 크기)` |
+> | 선 탐색 최대 거리 (`max_distance`) | `min(1.5 × 패턴 주기, 60% × short_side)` |
+> | 각도 허용 오차 `τ_angle` | 5° (각도는 스케일 불변이므로 절대값 허용) |
+> | augmentation shift 폭 (F-37) | `±12% × short_side` — 샘플 A에서 ≈±20 px, 2048px 이미지에서 ≈±245 px |
+>
+> **각도·비율·nm 값은 스케일 불변이므로 절대값을 써도 된다.** 오히려 nm는 물리 단위이므로 **권장**된다(F-96).
 
 ### F-90. 겹치는 주석의 렌더링 · 선택 · 오클루전 `P0`
 
@@ -1051,7 +1148,7 @@ meta_tag, component_label, image_name, run_id, note
   | 요소 | 값 | MIR 표현 |
   |---|---|---|
   | base | y=14 기준선 | `entity:datum_top` (루트 → 앵커 필요) |
-  | offset_guide | x=158, 66 px, **아래 방향** | `entity:off_1 { from: datum_top, signed_length_px: +66 }` |
+  | offset_guide | x=158, 66 px, **아래 방향** | `entity:off_1 { base: datum_top, derived: datum_B, direction: "down", distance: {value, unit} }` (4.1 스키마와 동일 형식) |
   | derived | y=80 기준선 | `position: offset_from(datum_top, ref: off_1)` |
 
 - **핵심 규칙**
@@ -1076,6 +1173,7 @@ meta_tag, component_label, image_name, run_id, note
 - **왜** 두 평행 기준선 중 어느 쪽이 원인이고 어느 쪽이 결과인지는 **기하만으로는 결정 불가능한 정보**다. 그러나 사용자의 그리기 순서에는 그것이 담겨 있다 — *"아래 선을 먼저 긋고 → 위로 이동 → 새 선"*.
 - **적용 규칙**
   - `offset_guide` 의 base = **먼저 그려진 쪽**(1순위 근거, 신뢰도 0.9).
+  - **방향(부호)은 base가 정해지면 자동으로 결정된다** — `direction = normalize(derived_point − base_point)`. 별도 추론이 필요 없다. 즉 **순서 하나가 base·derived·부호 세 가지를 동시에 확정한다.**
   - 계측선이 참조하는 가이드라인은 **그 계측선보다 먼저 그려진 것** 중에서 찾는다(탐색 공간 축소).
   - 사용자가 나중에 순서를 뒤바꿔 편집하면 `explicit_order` 플래그로 고정하고, 이후 자동 추론이 덮어쓰지 않게 한다.
 - **기존 시스템과의 대비** 스크리블을 래스터 PNG로 저장하면 **순서 정보가 100% 소실**된다. 기존 시스템이 "어느 빨간 선이 기준인가"를 VLM에게 자연어로 물어야 했던 이유가 이것이다. 벡터 캔버스는 이 정보를 **공짜로** 얻는다 — 캔버스 도입의 가장 값진 부수 효과 중 하나다.
@@ -1100,9 +1198,9 @@ meta_tag, component_label, image_name, run_id, note
 
   | 유형 | 정의 | MIR | 재현 연산 | 필요한 부가 정보 |
   |---|---|---|---|---|
-  | **G** `guide_perpendicular` | 끝점이 빨간 가이드라인 위에 있고, 계측선이 그 가이드라인에 **수직** | `{type:"guide", ref:"entity:datum_B"}` | `project_point_onto_line()` | 어느 가이드라인인가 |
+  | **G** `guide_perpendicular` | 끝점이 빨간 가이드라인 위에 있고, 계측선이 그 가이드라인에 **수직** | `{type:"guide_perpendicular", ref:"entity:datum_B"}` | `project_point_onto_line()` | 어느 가이드라인인가 |
   | **C** `class_edge` | 끝점이 특정 마스크 클래스의 **가장자리**에 붙음 | `{type:"class_edge", class:"poly", qualifier:"bottommost"}` | `extreme_point()` / `first_crossing()` | **어느 클래스** + **방향 한정자**(F-98) |
-  | **I** `on_guide_interval` | 계측선 **전체가 가이드라인 위에 공선**으로 놓이고, 양 끝이 그 선을 따라간 **클래스 구간의 시작·끝** | `{type:"interval", cut_line:"cut_B", class:"poly"}` | `line_scan_intervals()` (F-81) | 컷라인 + 대상 클래스 |
+  | **I** `on_guide_interval` | 계측선 **전체가 가이드라인 위에 공선**으로 놓이고, 양 끝이 그 선을 따라간 **클래스 구간의 시작·끝** | `{type:"on_guide_interval", cut_line:"cut_B", class:"poly"}` | `line_scan_intervals()` (F-81) | 컷라인 + 대상 클래스 |
 
 - **끝점은 각각 독립이다.** 한 계측선의 `start` 가 유형 G이고 `end` 가 유형 C인 것이 정상이다 — 샘플 B가 정확히 그렇다(위쪽 끝은 레벨 표시자에 수직 종속, 아래쪽 끝은 클래스 경계).
 - **★ 같은 그룹 안에서도 선마다 다르다.** 사용자 확인: 샘플 B의 초록선 중 *"하나는 가장 밝은 클래스의 끝지점, 하나는 가장 어두운 클래스의 끝지점"* 에 붙어 있다. 겉보기에 똑같은 3개의 수직선이 **끝점 규칙이 서로 다르다.**
@@ -1254,42 +1352,41 @@ Gemma4 / GaussO4.1 전송 계층, reasoning 정책, 구조화 JSON 복구, **이
   "cut_lines": [
     { "id": "cut_B", "datum": "entity:datum_B", "scan_axis": "u",
       "target_class": "poly", "extent": "full_width",
-      "min_interval_px": { "relative": "0.015 * short_side" } }
+      "min_interval": { "relative": "0.015 * short_side" } }
   ],
 
+  // anchors[] = 여러 엔티티/측정이 '공유하는' 명명된 앵커만.
+  // 특정 측정의 끝점은 measurements[].endpoint_anchors 에만 정의한다(중복 금지).
   "anchors": [
     { "id": "primary_axis", "kind": "line",
       "op": "fit_line",
       "args": { "points": { "op": "extreme_points",
                             "args": { "class": "poly", "over": "pattern:finger[*]", "dir": "top" } } },
-      "robust": { "method": "ransac", "residual_px": 2.0 },
+      "robust": { "method": "ransac", "residual": { "relative": "1.0 * tau_dist" } },
       "provenance": { "source": "snap+cv", "confidence": 0.91 } },
 
-    { "id": "m1_start", "kind": "point",
-      "op": "extreme_point",
-      "args": { "class": "poly", "roi": "pattern:finger[$i]", "dir": "top" },
-      "robust": { "method": "median_of_k", "k": 5 },
-      "provenance": { "source": "snap", "confidence": 0.97 } },
-
-    { "id": "m1_end", "kind": "point",
-      "op": "first_crossing",
-      "args": { "from": "anchor:m1_start", "direction": "frame:lcs_1.normal",
-                "target_class": "SiN", "max_distance_px": 300 },
-      "provenance": { "source": "snap", "confidence": 0.88 } }
+    { "id": "structure_top", "kind": "line",
+      "op": "fit_baseline",
+      "args": { "class": "poly", "dir": "top", "method": "ransac_line" },
+      "note": "chain_1 의 루트 앵커. 여러 엔티티가 공유하므로 이름을 갖는다.",
+      "provenance": { "source": "user", "confidence": 1.0 } }
   ],
 
   "measurements": [
     { "id": "m1", "name": "Fin_Depth", "type": "distance",
       "layer": "measure", "kind": "segment",
+      // ★ endpoint_anchors 가 이 측정의 끝점 정의의 '정본'이다.
+      //    anchors[] 는 여러 곳이 공유하는 '명명된' 앵커(primary_axis 등)만 담는다.
+      //    끝점 정의를 anchors[] 에 중복 기재하지 않는다.
       "endpoint_anchors": {
         "start": { "type": "guide_perpendicular", "ref": "entity:datum_level_1",
                    "confidence": 0.95 },
         "end":   { "type": "class_edge", "class": "poly",
                    "qualifier": "first_crossing", "roi": "pattern:finger[$i]",
+                   "search_limit": { "relative": "1.5 * pattern_period" },
                    "robust": { "method": "median_of_k", "k": 5 },
                    "confidence": 0.88 }
       },
-      "from": "anchor:m1_start", "to": "anchor:m1_end",
       "iterate_over": "pattern:finger[*]",
       "cardinality": "per_instance",
       "group_by": "instance_index",
@@ -1312,12 +1409,12 @@ Gemma4 / GaussO4.1 전송 계층, reasoning 정책, 구조화 JSON 복구, **이
 
   "constraints": [
     { "type": "coincident_with", "of": "measurement:m2", "with": "entity:datum_B",
-      "tolerance_px": 3, "source": "auto_inferred" },
+      "tolerance": { "relative": "1.0 * tau_dist" }, "source": "auto_inferred" },
     { "type": "perpendicular_to", "of": "entity:offset_A_to_B", "with": "entity:datum_A" }
   ],
 
   "clarifications": [
-    { "field": "anchors.m1_end.args.target_class",
+    { "field": "measurements.m1.endpoint_anchors.end.class",
       "question": "끝점이 닿는 층은 어디입니까?",
       "options": ["SiN 상단 경계", "poly 하단 경계", "red_2 투영점"],
       "answered": "SiN 상단 경계", "answered_by": "user" }
@@ -1339,7 +1436,7 @@ Gemma4 / GaussO4.1 전송 계층, reasoning 정책, 구조화 JSON 복구, **이
 
 **핵심 포인트**
 - `demo_strokes`가 **원본 시연을 보존**한다 → F-36 재현 검증의 정답지이자, 캔버스 왕복의 근거.
-- `anchors`는 **좌표가 아니라 연산자 트리**다 → 다른 이미지에 그대로 적용 가능.
+- `anchors`는 **좌표가 아니라 연산자 트리**다 → 다른 이미지에 그대로 적용 가능. 단 `anchors[]` 는 **여러 곳이 공유하는 명명된 앵커**(주축, 체인 루트)만 담고, **개별 측정의 끝점은 `measurements[].endpoint_anchors` 에만** 정의한다. 두 곳에 중복 기재하면 어느 쪽이 정본인지 알 수 없어진다.
 - `entities` 가 **빨강 가이드라인의 하위 역할(kind)** 을 명시한다. 특히 `offset_guide` 는 **길이가 다른 기준선의 정의**이므로, `datum_B.position` 이 절대 좌표가 아니라 `offset_from(datum_A, ref: offset_A_to_B)` 로 기록된다. **이 한 줄이 일반화의 성패를 가른다.** (2.4.3 ③)
 - `datum_chains` 가 기준면의 계보를 담는다. **루트만 실제 앵커를 갖고**, 나머지는 오프셋으로 정의된다. 질문해야 할 대상이 루트로 좁혀지는 근거다. (F-94)
 - `stroke_order` 가 **그리기 순서를 의존 방향의 증거로 보존**한다. 래스터 스크리블에서는 영원히 사라지는 정보다. (F-95)
@@ -1355,8 +1452,21 @@ measure_item, group_id, index, value_nm,
 sx, sy, ex, ey,
 meta_tag, component_label, image_name, run_id, note
 ```
-- **하위 호환 유지**(기존 자산·다운스트림 도구 보호).
-- 확장 컬럼(선택): `relocalize_score`, `anchor_confidence`, `qc_flag`, `mir_version`.
+- **하위 호환 유지**(기존 자산·다운스트림 도구 보호). 13개 표준 컬럼의 이름·순서는 동결한다.
+- **확장 컬럼(선택, 뒤에 덧붙임)**
+
+  | 컬럼 | 내용 | 왜 필요한가 |
+  |---|---|---|
+  | `endpoint_type_start` / `endpoint_type_end` | `guide_perpendicular` / `class_edge` / `on_guide_interval` | 결과만 보고 **"이게 어떤 방식의 측정이었나"** 를 역추적할 수 있어야 한다 (F-97) |
+  | `anchor_class_start` / `anchor_class_end` | 유형 C일 때 대상 클래스명 | 같은 그룹 안에서도 선마다 다를 수 있다 (F-98) |
+  | `cardinality` | `fixed` / `per_instance` / `all_occurrences` | 개수 변화가 정상인지 이상인지 판정 근거 (F-83) |
+  | `datum_chain` | 이 측정이 속한 기준면의 계보 요약 (`structure_top -128.9nm`) | 값이 이상할 때 **기준면부터 의심**할 수 있게 (F-94) |
+  | `relocalize_score` | 재정위 신뢰도 | 낮은 값 = 다른 위치를 쟀을 수 있음 (F-25) |
+  | `anchor_confidence` | 끝점 앵커 신뢰도 (min of start/end) | QC 정렬 기준 |
+  | `qc_flag` | QC 룰 위반 코드 | 조용한 통과 방지 (F-43) |
+  | `mir_version` / `run_id` | 재현 추적 | F-46 |
+
+- **원칙** `note` 필드(JSON 문자열)에 아무거나 밀어 넣지 않는다. **질의·집계 대상이 되는 값은 컬럼으로 승격**한다. 기존 시스템은 모든 부가 정보를 `note` 의 JSON에 넣어 사후 분석이 사실상 불가능했다.
 
 ## 4.3 실행 매니페스트 `run.json`
 
@@ -1380,7 +1490,7 @@ meta_tag, component_label, image_name, run_id, note
 
 ---
 
-# Part 5. ★ 모델 API 통합 설계 (Gemma4 / GaussO4.1)
+# Part 5. ★ 모델 API 통합 설계 (Gemma4 / GaussO4.1 · OpenAI 개발 프로파일)
 
 > **전제 (확정 제약)**
 > 1. 사용 가능한 모델은 **Gemma4** 와 **GaussO4.1** **둘 뿐**이다. 기존 저장소가 쓰던 Qwen3-VL(로컬 HF), Grounding DINO, GPT-OSS, Gemma3, Llama-4는 **모두 제거**한다.
@@ -1489,12 +1599,15 @@ extra_body["include_reasoning"]     = False
 `report-search`는 **backend(엔드포인트+모델) ↔ role(용도별 토큰·추론 설정)** 을 분리했다. 이 2단 구조를 그대로 쓴다.
 
 ```python
+# report-search 원본 (참고용)
 LLM_BACKENDS = {"gemma4": BackendSpec(...), "gausso4_1": BackendSpec(...)}
 LLM_ROLES    = {"planner": RoleSpec(backend="gausso4_1", max_tokens=..., reasoning_mode="medium"), ...}
 ```
 
 - 역할별 백엔드는 `<ROLE>_BACKEND` 환경변수로 재정의 가능 → **코드 변경 없이 모델을 바꿔 A/B**할 수 있다.
 - 기동 시 `validate_llm_role_registry()` 로 모든 역할이 실재하는 백엔드를 가리키는지 검증하고, 미설정이면 **즉시 실패**한다(런타임에 조용히 기본값으로 흐르지 않는다).
+
+> **★ 우리는 여기서 한 단계 더 나눈다.** 위 원본은 `RoleSpec` 이 백엔드 이름을 직접 들고 있다. 사외(OpenAI)와 사내(Gemma4/GaussO4.1) 두 환경을 오가야 하므로, 신규 시스템은 **`RoleSpec` 에서 백엔드 이름을 빼고 "필요한 능력"만 선언**한 뒤 **프로파일이 role→backend 바인딩을 제공**하는 3층 구조로 확장한다. 이 문서에서 `RoleSpec` 이 언급되는 모든 곳은 **5.5.2의 3층 정의를 따른다.** → [5.5.2](#552-역할은-백엔드가-아니라-능력을-선언한다)
 
 ---
 
@@ -1512,7 +1625,9 @@ LLM_ROLES    = {"planner": RoleSpec(backend="gausso4_1", max_tokens=..., reasoni
 
 ### 5.2.2 역할 레지스트리 (초기값)
 
-| role | backend | reasoning | max_tokens | 이미지 | 설명 |
+> **아래 `backend` 열은 `onprem` 프로파일에서의 바인딩이다.** 역할 자체는 백엔드 이름을 모르며, 바인딩은 프로파일이 제공한다(5.5.2). `dev_openai` 프로파일의 바인딩은 [5.5.3 표](#553-프로파일별-바인딩-표)에 있다.
+
+| role | backend (onprem) | reasoning | max_tokens | 이미지 | 설명 |
 |---|---|---|---|---|---|
 | `intent_enrich` | gemma4 | — | 2,000 | ≤4 | 스냅 정보가 부족할 때 의미 보강 (F-27) |
 | `clarify_options` | gemma4 | — | 1,500 | ≤4 | 모호성 선택지 생성 (F-18) |
@@ -1537,7 +1652,7 @@ LLM_ROLES    = {"planner": RoleSpec(backend="gausso4_1", max_tokens=..., reasoni
 ## 5.3 신규 기능 (F-59 ~ F-79)
 
 ### F-59. 모델 백엔드 · 역할 레지스트리 `P0`
-- **무엇** `BackendSpec`(엔드포인트/모델/키/티켓/api_profile) + `RoleSpec`(백엔드/토큰/추론 모드/추론 예산) 2단 레지스트리와 `resolve_role()`.
+- **무엇** `BackendSpec`(엔드포인트/모델/키/티켓/api_profile) + `RoleSpec`(**능력 선언** — tier / needs_multimodal / needs_reasoning / max_images / 토큰 / 추론 모드·예산) + `ProfileBindings`(role→backend) **3층** 레지스트리와 `resolve_role()`. **RoleSpec은 백엔드 이름을 갖지 않는다**(5.5.2).
 - **구현** `platform/llm/backends.py`, `platform/llm/roles.py`. `report-search/app/llm_roles.py` 구조를 그대로 이식하되 역할 목록을 5.2.2로 교체.
 - 기동 시 전체 역할 검증. `sanitized_llm_routing()`(키·티켓 마스킹된 라우팅 덤프)을 `/api/system/llm-routing` 으로 노출해 운영자가 현재 배선을 확인할 수 있게 한다.
 
@@ -1918,11 +2033,17 @@ effective_per_image_bytes = min(하드 200MB, 소프트 6MB, backend.vendor_max_
 ### 5.5.7 미구성 백엔드 접근 차단 (Fail-Fast)
 
 ```python
-def build_backend(key: str) -> BackendSpec:
-    spec = PROFILE_BINDINGS[current_profile()].get(key)
+# PROFILE_BINDINGS: dict[profile_name, dict[role_name, backend_key]]
+# BACKEND_SPECS   : dict[profile_name, dict[backend_key, BackendSpec]]
+#   → 해당 프로파일에 속하지 않는 백엔드는 이 딕셔너리에 아예 들어오지 않는다.
+
+def resolve_backend(role: str) -> BackendSpec:
+    profile = current_profile()
+    key = os.getenv(f"{role.upper()}_BACKEND") or PROFILE_BINDINGS[profile].get(role)
+    spec = BACKEND_SPECS[profile].get(key) if key else None
     if spec is None or not spec.base_url:
         raise LLMBackendUnavailable(
-            f"backend '{key}' is not configured in profile '{current_profile()}'. "
+            f"role '{role}' → backend '{key}' is not configured in profile '{profile}'. "
             f"사내 백엔드는 dev_openai 프로파일에서 구성되지 않습니다."
         )
     return spec
@@ -1956,13 +2077,14 @@ OpenAI 모드는 **이미지를 사외로 내보낸다**. 반도체 계측 마�
 
 ## 5.6 모델 추가 · 교체 절차
 
-향후 새 모델(예: GaussO5, Gemma5, 다른 벤더)이 추가될 때 **코드 수정 범위를 3곳으로 한정**한다.
+향후 새 모델(예: GaussO5, Gemma5, 다른 벤더)이 추가될 때 **코드 수정 범위를 아래 4곳으로 한정**한다.
 
 | 단계 | 파일 | 작업 | 예상 분량 |
 |---|---|---|---|
 | ① 정책 | `platform/llm/policy.py` | `ProviderPolicy` 행 1개 추가 (reasoning 형식, response_format, token 파라미터, 인증 방식, 벤더 이미지 상한) | 10줄 |
 | ② 백엔드 | `platform/llm/backends.py` + `.env` | `BackendSpec` 1개 + 환경변수 5개 | 10줄 |
 | ③ 바인딩 | `platform/llm/profiles.py` | 프로파일 표의 role→backend 항목 수정, 또는 `<ROLE>_BACKEND` 로 런타임 오버라이드 | 1줄 |
+| ④ 픽스처 | `tests/llm/conformance/cassettes/<backend>/` | 적합성 스위트(F-79) 카세트 녹화 | — |
 
 **그 외 어떤 코드도 고치지 않는다.** 프롬프트, 슬롯 플래너, JSON 복구, 검증 게이트, 렌더러는 모델을 모른다.
 
@@ -1973,7 +2095,7 @@ OpenAI 모드는 **이미지를 사외로 내보낸다**. 반도체 계측 마�
 4. **롤백** — 환경변수 되돌리기 + 재기동. 코드 배포 불필요.
 
 **교체가 쉬운지 확인하는 인수 조건**
-> 새 모델을 붙이는 PR의 diff가 **`policy.py` + `backends.py` + `.env.example` + 테스트 픽스처**에만 닿아야 한다. 다른 파일이 바뀌었다면 추상화가 샌 것이므로 설계 결함으로 간주한다.
+> 새 모델을 붙이는 PR의 diff가 **`policy.py` + `backends.py` + `profiles.py` + `.env.example` + 테스트 픽스처**에만 닿아야 한다. 다른 파일이 바뀌었다면 추상화가 샌 것이므로 설계 결함으로 간주한다.
 
 ---
 
@@ -2123,7 +2245,9 @@ scribblemetro/
 │           ├── cache.py         # 응답 캐시
 │           └── telemetry.py     # 호출 계측 · 예산 가드
 ├── templates/               # measure.py Jinja 템플릿
+├── prompts/                 # 역할별 프롬프트, 버전 관리 (<role>/<version>.md)
 ├── benchmarks/              # 평가 데이터셋 + 회귀 스위트
+│   └── synthetic/           # F-78 합성 픽스처 생성기
 └── deploy/                  # Docker, compose, migrations
 ```
 
@@ -2131,7 +2255,7 @@ scribblemetro/
 
 > 인원 가정: 백엔드 1.5 · 프런트 1 · CV/ML 1 (총 3~4인). 기간은 목표치.
 
-### M0 — 기반 정비 (2주)
+### M0 — 기반 정비 (3주)
 - 리포지토리 재구성, 설정/시크릿 외부화, DB 스키마, 작업 큐, 로깅.
 - **기존 코드 이관**: 스크리블 CV 추출, meta 로더, CSV 정규화, few-shot 저장소, 전이 평가 스크립트를 각 패키지로 분해 이식.
 - **★ 모델 API 계층 구축 (Part 5)**: `report-search/app/model_client.py` 패턴 이식 → 역할(능력 선언)·프로파일·백엔드 3층 구조, 전송 계층, reasoning 정책, JSON 3단 복구, **이미지 페이로드 파이프라인(200MB) + 4장 슬롯 플래너**.
@@ -2145,7 +2269,7 @@ scribblemetro/
 - 스트로크는 `demo_strokes`로 저장되고 스냅 기록이 남는다.
 - **인수 조건**: 사용자가 브라우저에서만 스크리블을 완성할 수 있다. 저장/재로드 시 왕복 손실 없음.
 
-### M2 — 의도 계층 (3주)
+### M2 — 의도 계층 (4주)
 - F-15(MIR), F-16(provenance), F-07(스트로크 정형화), F-09(제약 인스펙터), F-17(되읽기), F-20(양방향 동기화).
 - F-11/F-26(반복 검출·전파) 1차.
 - **★ 샘플 분석 반영분 (2.4)**: F-80(엔티티 kind 2축), F-81(컷라인·라인스캔), F-82(데이텀 오프셋 확정), F-83(가변 카디널리티), F-84(공선 제약), F-89(스케일 불변 임계값), F-90(오클루전·선택).
@@ -2179,7 +2303,7 @@ scribblemetro/
 - **사내 전환 완료 후**: 프로파일 전환 리포트(동일 시나리오의 dev_openai vs onprem KPI 비교)를 작성해 격차 원인을 정리한다. 이 리포트가 이후 모델 교체 때의 기준선이 된다.
 - 벤치마크 확장 및 프롬프트/모델 회귀 테스트 정착.
 
-**총 소요: 약 18주 (M0~M5) + 지속 개선** — M0가 2주에서 3주로 늘어날 수 있다(모델 API 계층 포함). 다만 이 투자는 M2 이후 모든 마일스톤이 재사용하므로 회수된다.
+**총 소요: 약 20주 (M0 3 + M1 3 + M2 4 + M3 4 + M4 3 + M5 3) + M6 지속 개선.** M0가 3주인 것은 모델 API 계층(Part 5)을 포함하기 때문이고, M2가 3주에서 4주로 늘어난 것은 2.4.5의 사용자 확인 반영분(F-94~F-98)이 MIR 골격에 해당하기 때문이다. 이 두 투자는 이후 모든 마일스톤이 재사용하므로 회수된다.
 
 ## 6.4 병렬화 및 의존성
 
@@ -2202,8 +2326,9 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 - **B3 스트레스 세트**: augmentation 자동 생성(시드 고정) + 저품질/결손 마스크 포함.
 - **B4 회귀 세트**: 과거 실패 사례 아카이브(모델·프롬프트 변경 시 반드시 통과).
 - **B5 모델 계약 세트**: 프로바이더별(gemma4 / gausso4_1 / openai) 요청 페이로드 스냅샷, 깨진 JSON 응답 10종, 429/타임아웃 주입, 초대형 이미지(>200MB 원본) 및 5장 첨부 시도, 민감도 태그 위반 — **모델을 실제로 호출하지 않고** 전송 계층만 검증하는 오프라인 스위트. 카세트 리플레이(F-79)로 CI에서 네트워크 없이 실행된다.
-- **B7 실표시 샘플 세트**: Part 2.4에서 분석한 것과 같은 **실제 사용자 표시 이미지**. 다중 높이 CD(샘플 A형), 데이텀 기준 깊이(샘플 B형), 소형 저해상도, 붙어 있는 구조, 곡면 기판 등 **까다로운 케이스를 의도적으로 모은다.** 특히 "9 px 기준선이 살아남는가" 같은 회귀 항목을 여기 고정한다.
 - **B6 합성 세트**: F-78 생성기의 산출물. **정답 앵커 위치가 수학적으로 알려져 있으므로** 재현·전이·민감도 임계값 보정의 기준이 된다. 사외 개발 단계의 유일한 데이터원이기도 하다.
+- **B7 실표시 샘플 세트**: Part 2.4에서 분석한 것과 같은 **실제 사용자 표시 이미지**. 다중 높이 CD(샘플 A형), 데이텀 기준 깊이(샘플 B형), 소형 저해상도, 붙어 있는 구조, 곡면 기판 등 **까다로운 케이스를 의도적으로 모은다.** 특히 "9 px 기준선이 살아남는가" 같은 회귀 항목을 여기 고정한다.
+
 
 ## 7.2 KPI
 
@@ -2212,7 +2337,7 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | K1 | 스트로크 의도 추천 수락률 | ≥ 80% | `Enter`로 1순위 수락 비율 |
 | K2 | 스냅 정확도 | ≥ 95% | 사용자가 스냅을 되돌린 비율의 여집합 |
 | K3 | 코드 첫 실행 성공률 | ≥ 95% | 정적검증 통과분 기준 |
-| K4 | **시연 재현 정확도** | 끝점 평균 ≤ 3px, 길이 오차 ≤ 3% | F-36 |
+| K4 | **시연 재현 정확도** | 끝점 평균 ≤ 재현 허용 오차(F-89), 길이 오차 ≤ 3% | F-36 |
 | K5 | **전이 성공률** | ≥ 90% (B2), ≥ 95% (B3) | F-37 |
 | K6 | 값 안정성 CV | ≤ 2% (기하 변환 하에서) | F-37 |
 | K7 | 사람 개입 시간 | 신규 레시피 ≤ 5분 | 세션 텔레메트리 |
@@ -2227,7 +2352,7 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | K16 | **프로파일 전환 무결성** | `dev_openai`↔`onprem` 전환 시 **코드·프롬프트 변경 0줄**, 동일 시나리오 완주 | F-73 |
 | K17 | **프로파일 간 슬롯 계획 동일성** | 100% 일치 (무엇을 몇 장 보냈는가) | F-76 |
 | K18 | **격리 위반** | 0건 (dev_openai에서 사내 호출 / `internal` 데이터 사외 전송) | F-73, F-77 |
-| K19 | **모델 교체 diff 범위** | `policy.py` + `backends.py` + `.env.example` + 픽스처 **4곳 이내** | 5.6 |
+| K19 | **모델 교체 diff 범위** | `policy.py` + `backends.py` + `profiles.py` + `.env.example` + 픽스처 **5곳 이내** | 5.6 |
 | K20 | **엔티티 kind 분류 정확도** | ≥ 95% (특히 `offset_guide` 미검출 0건) | F-80 |
 | K21 | **데이텀 상대 정의율** | 기준선 중 상대 정의(`offset_from`) 비율 **≥ 95%** — 절대 좌표로 굳은 기준선이 일반화 실패의 주범 | F-82 |
 | K22 | **스케일 불변성** | 동일 장면 0.5×/1×/4× 리사이즈에서 검출 엔티티 종류·개수 100% 동일 | F-89 |
