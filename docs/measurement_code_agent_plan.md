@@ -11,9 +11,9 @@
 - [Part 0. 문서의 목적과 읽는 법](#part-0-문서의-목적과-읽는-법)
 - [Part 1. 기존 시스템(As-Is) 완전 분석](#part-1-기존-시스템as-is-완전-분석)
 - [Part 2. 신규 시스템(To-Be) 컨셉과 아키텍처](#part-2-신규-시스템to-be-컨셉과-아키텍처)
-- [Part 3. 전체 기능 명세 (F-01 ~ F-72)](#part-3-전체-기능-명세)
+- [Part 3. 전체 기능 명세 (F-01 ~ F-79)](#part-3-전체-기능-명세)
 - [Part 4. 핵심 데이터 모델](#part-4-핵심-데이터-모델)
-- [Part 5. ★ 모델 API 통합 설계 (Gemma4 / GaussO4.1)](#part-5--모델-api-통합-설계-gemma4--gausso41)
+- [Part 5. ★ 모델 API 통합 설계 (Gemma4 / GaussO4.1 · OpenAI 개발 프로파일)](#part-5--모델-api-통합-설계-gemma4--gausso41)
 - [Part 6. 구현 계획 (모듈 · 기술스택 · 마일스톤)](#part-6-구현-계획)
 - [Part 7. 평가 체계와 완료 기준](#part-7-평가-체계와-완료-기준)
 - [Part 8. 리스크와 대응](#part-8-리스크와-대응)
@@ -28,7 +28,7 @@
 1. **기존 저장소가 무엇을 만들려고 했는지**를 코드의 세부 구현이 아니라 **설계 의도와 시스템 구조 수준**에서 정리한다. (Part 1)
 2. 그 컨셉을 계승하되, **"사용자가 그림판처럼 스크리블을 그리면 측정 코드를 만들어주는 Agent"** 라는 목표에 맞춰 **새로 개발할 시스템의 전체 기능과 구현 계획**을 정의한다. (Part 2~8)
 
-Part 3의 기능들은 모두 `F-xx` 번호를 가진다. (F-01~F-58은 제품 기능, F-59~F-72는 모델 API 통합 기능으로 Part 5에서 상세히 다룬다.) Part 6의 마일스톤과 Part 7의 KPI가 이 번호를 참조하므로, 개발 착수 시 이 번호를 그대로 이슈 트래커의 Epic/Story 키로 사용하면 된다.
+Part 3의 기능들은 모두 `F-xx` 번호를 가진다. (F-01~F-58은 제품 기능, F-59~F-79는 모델 API 통합·배포 프로파일 기능으로 Part 5에서 상세히 다룬다.) Part 6의 마일스톤과 Part 7의 KPI가 이 번호를 참조하므로, 개발 착수 시 이 번호를 그대로 이슈 트래커의 Epic/Story 키로 사용하면 된다.
 
 **우선순위 표기**
 - `P0` — MVP 필수. 이것이 없으면 시스템이 성립하지 않음.
@@ -205,6 +205,7 @@ meta_tag, component_label, image_name, run_id, note
 | **Human in the right loop** | 사람은 코드를 고치지 않는다. **의도를 확인·수정**한다. 수정은 항상 MIR 레벨에서 일어난다. |
 | **Everything is versioned** | 이미지, MIR, 코드, 모델, 프롬프트, 실행 결과가 모두 해시로 묶여 재현 가능하다. |
 | **Models accelerate, never gate** | 모델 호출은 품질을 높이는 가속기다. 모델이 죽어도 드로잉·스냅·패턴검출·측정 실행은 전부 동작해야 한다. (F-71) |
+| **The app must not know its model** | 애플리케이션 코드는 역할 이름(`planner`)만 알고 모델 이름은 모른다. 모델 교체는 설정 한 줄이며, 그것이 안 되면 추상화가 샌 것이다. (F-73, 5.6) |
 
 ## 2.3 아키텍처
 
@@ -655,9 +656,9 @@ meta_tag, component_label, image_name, run_id, note
 
 ---
 
-## H. 모델 API 통합 (F-59 ~ F-72)
+## H. 모델 API 통합 · 배포 프로파일 (F-59 ~ F-79)
 
-Gemma4 / GaussO4.1 전용 전송 계층, reasoning 정책, 구조화 JSON 복구, 그리고 **이미지 4장 · 장당 200MB 제약**을 다루는 기능군이다. 제약이 설계에 직접 영향을 주므로 별도 장으로 분리했다 — **[Part 5](#part-5--모델-api-통합-설계-gemma4--gausso41)** 참조.
+Gemma4 / GaussO4.1 전송 계층, reasoning 정책, 구조화 JSON 복구, **이미지 4장 · 장당 200MB 제약**, 그리고 **초기 셋업용 OpenAI 프로파일과 모델 교체 구조**를 다루는 기능군이다. 제약과 배포 환경이 설계에 직접 영향을 주므로 별도 장으로 분리했다 — **[Part 5](#part-5--모델-api-통합-설계-gemma4--gausso41)** 참조.
 
 | # | 기능 | 우선순위 |
 |---|---|---|
@@ -675,6 +676,13 @@ Gemma4 / GaussO4.1 전용 전송 계층, reasoning 정책, 구조화 JSON 복구
 | F-70 | 프롬프트 · 모델 회귀 스위트 | P1 |
 | F-71 | 폴백 및 열화 정책 (모델 없이도 동작) | P0 |
 | F-72 | 페이로드 보안 · 민감정보 처리 | P2 |
+| F-73 | **배포 프로파일 스위치 (dev_openai / onprem)** | P0 |
+| F-74 | **OpenAI 백엔드 어댑터** | P0 |
+| F-75 | **능력 하한 강제 (Capability Floor)** | P0 |
+| F-76 | 제약 패리티 강제 (4장 · 크기) | P0 |
+| F-77 | **이그레스 가드 · 데이터 반출 통제** | P0 |
+| F-78 | **합성 픽스처 데이터 생성기** | P0 |
+| F-79 | 프로바이더 적합성 테스트 & 카세트 리플레이 | P1 |
 
 ---
 
@@ -787,6 +795,8 @@ meta_tag, component_label, image_name, run_id, note
 ```jsonc
 { "run_id": "...", "recipe_id": "...", "mir_hash": "...", "plan_hash": "...", "code_hash": "...",
   "image": {"path": "...", "sha256": "..."},
+  "deployment_profile": "onprem",
+  "capability_floor": "onprem",
   "models": {
     "planner":       {"backend": "gausso4_1", "model": "GaussO4.1-...", "reasoning": "medium", "thinking_budget": 1024},
     "intent_enrich": {"backend": "gemma4",    "model": "Gemma4-...",    "reasoning": null}
@@ -809,6 +819,10 @@ meta_tag, component_label, image_name, run_id, note
 > 2. 두 모델 모두 **멀티모달(이미지 입력) 지원**.
 > 3. **1회 호출당 이미지 최대 4장.**
 > 4. **이미지 1장당 200MB 초과 시 호출 불가.**
+>
+> **전제 (개발 단계 제약)**
+> 5. Gemma4 / GaussO4.1은 **사내 모델이라 사외에서 호출할 수 없다.** 따라서 **초기 셋업 단계는 사외망에서 OpenAI API로 대체 수행**하고, 사내 진입 후 프로파일만 바꿔 전환한다. OpenAI 모드에서는 사내 모델을 **한 번도 호출하지 않는다.** → **[5.5 배포 프로파일](#55--배포-프로파일--초기-개발은-openai-운영은-사내-모델)**
+> 6. 향후 모델이 추가·교체될 수 있으므로 **모델 교체가 설정 변경만으로 끝나는 구조**여야 한다. → **[5.6 모델 추가 · 교체 절차](#56-모델-추가--교체-절차)**
 >
 > 호출 방식은 `sy5255/report-search` 저장소의 `app/model_client.py` · `app/config.py` · `app/llm_roles.py` 패턴을 **그대로 계승**한다. 이미 사내 게이트웨이의 특성(헤더 규약, reasoning 파라미터, response_format 미지원, 429 처리, 커넥션 재사용)이 검증되어 있으므로 재발명하지 않는다.
 
@@ -952,7 +966,7 @@ LLM_ROLES    = {"planner": RoleSpec(backend="gausso4_1", max_tokens=..., reasoni
 
 ---
 
-## 5.3 신규 기능 (F-59 ~ F-72)
+## 5.3 신규 기능 (F-59 ~ F-79)
 
 ### F-59. 모델 백엔드 · 역할 레지스트리 `P0`
 - **무엇** `BackendSpec`(엔드포인트/모델/키/티켓/api_profile) + `RoleSpec`(백엔드/토큰/추론 모드/추론 예산) 2단 레지스트리와 `resolve_role()`.
@@ -1087,7 +1101,72 @@ LLM_ROLES    = {"planner": RoleSpec(backend="gausso4_1", max_tokens=..., reasoni
 - 로그에 **base64 이미지 본문을 절대 남기지 않는다**(해시와 바이트 수만).
 - 이미지에 웨이퍼 ID/로트 번호 등이 렌더링되어 있으면 전송 전 마스킹하는 옵션.
 - API 키·티켓은 환경변수. 라우팅 덤프는 항상 마스킹.
-- 외부 전송 여부(사내 게이트웨이 vs 외부망)를 설정에 명시하고, 외부일 경우 이미지 전송을 기본 차단.
+- 외부 전송 여부(사내 게이트웨이 vs 외부망)를 설정에 명시하고, 외부일 경우 이미지 전송을 기본 차단(F-77이 이를 강제한다).
+
+### F-73. ★ 배포 프로파일 스위치 `P0`
+- **무엇** `LLM_DEPLOYMENT_PROFILE = dev_openai | onprem` 한 개로 전체 모델 배선을 전환한다. 역할은 능력만 선언하고, 프로파일이 role→backend 바인딩을 제공한다 (5.5.2~5.5.3).
+- **왜** 초기 셋업은 사외에서 OpenAI로, 본 개발·운영은 사내에서 Gemma4/GaussO4.1로 한다. 이 전환이 코드 변경 없이 일어나야 한다.
+- **인수 조건**
+  - `dev_openai` 프로파일에서 **사내 엔드포인트로 HTTP 요청이 단 1건도 나가지 않는다** (네트워크 캡처로 검증).
+  - 프로파일만 바꾸고 재기동하면 동일 시나리오가 그대로 동작한다(코드·프롬프트 무변경).
+- **구현** `platform/llm/profiles.py` — `PROFILE_BINDINGS: dict[profile, dict[role, backend_key]]`.
+
+### F-74. OpenAI 백엔드 어댑터 `P0`
+- **무엇** `ProviderPolicy` 에 `openai` 행을 추가하고 `openai_vision` / `openai_reasoning` 두 백엔드를 정의한다 (5.5.4).
+- **처리해야 할 차이**
+  - `reasoning_effort` 는 `extra_body` 가 아니라 **최상위 파라미터**(`reasoning_style="effort_native"`).
+  - 토큰 파라미터가 **`max_completion_tokens`**.
+  - 추론 모델은 기본값 외 `temperature` 를 거부 → `send_temperature=False`.
+  - 인증이 Bearer, **사내 트레이스 헤더(`x-dep-ticket` 등)를 보내지 않는다** → 헤더 생성을 정책에 위임.
+  - 벤더 이미지 상한이 200MB보다 작다 → `min()` 적용(F-76).
+- **모델 지정** 코드에 모델 ID를 하드코딩하지 않는다. `OPENAI_VISION_MODEL`, `OPENAI_REASONING_MODEL` 환경변수로 주입하고, 요구 능력(멀티모달 입력 / 추론 강도 제어)만 문서화한다. 벤더 모델 라인업은 바뀌므로 **설정값으로 남긴다.**
+- **인수 조건** F-79 적합성 스위트 전 항목 통과.
+
+### F-75. ★ 능력 하한 강제 (Capability Floor) `P0`
+- **무엇** `LLM_CAPABILITY_FLOOR=onprem` (기본값)이면 OpenAI를 쓰더라도 **사내 모델의 능력 수준으로 낮춰** 동작시킨다 (5.5.5).
+- **왜** OpenAI의 strict JSON Schema에 기대어 개발하면, 사내 전환 시 **한 번도 실행된 적 없는 3단 복구 경로**가 처음 돌게 된다. 초기 셋업의 목적이 무너진다.
+- **강제 항목** `supports_response_format=False` / 이미지 ≤4장 / 크기 하한 / reasoning 정규화.
+- **인수 조건** 능력 하한 ON 상태에서 dev_openai로 전체 시나리오를 돌렸을 때, `structured_json` 텔레메트리에 **primary/fallback/repair 3단계가 모두 최소 1회 이상 실행**된 기록이 남는다.
+
+### F-76. 제약 패리티 강제 `P0`
+- **무엇** 이미지 4장·크기 상한을 **백엔드 속성이 아니라 시스템 계약**으로 취급한다 (5.5.6). 실효값은 `min(전역, 역할, 벤더)`.
+- **왜** 프로파일에 따라 제약이 달라지면 개발에서 통과한 것이 운영에서 실패한다.
+- **인수 조건** 동일한 입력에 대해 두 프로파일이 **동일한 슬롯 계획(slot_plan)** 을 산출한다(모델 응답 내용은 달라도, 무엇을 몇 장 보냈는지는 같아야 한다).
+
+### F-77. ★ 이그레스 가드 · 데이터 반출 통제 `P0`
+- **무엇** 데이터셋에 `sensitivity ∈ {synthetic, public, internal}` 를 태깅하고, **외부 백엔드로 `internal` 데이터가 나가는 것을 전송 계층에서 거부**한다 (5.5.8).
+- 텍스트도 대상 — MIR의 실제 파일명·로트 ID는 외부 전송 시 **익명화 필터**를 통과시키고 매핑은 로컬에만 보관.
+- `LLM_EXTERNAL_EGRESS=deny` (운영 기본)이면 외부 백엔드를 아예 구성하지 않는다.
+- **인수 조건** `internal` 태그 이미지로 dev_openai 호출을 시도하면 **요청 전 단계에서 예외**가 발생하고, 어떤 바이트도 전송되지 않는다.
+
+### F-78. ★ 합성 픽스처 데이터 생성기 `P0`
+- **무엇** 실제 계측 이미지 없이 파이프라인 전체를 개발할 수 있도록, **합성 마스크 + meta JSON + 정답 스크리블 + 정답 측정값**을 프로그램으로 생성한다.
+- **생성 내용**
+  - 반복 핑거 구조, 다층 스택, 경사/회전이 있는 단면 등 **패턴 유형별 템플릿**
+  - 클래스 값(10/30/50 등)과 `pixel_scale_um_x/y` 를 가진 meta JSON
+  - 정답 앵커 위치가 **수학적으로 알려진** 상태 → 측정 정답값을 오차 없이 계산 가능
+  - augmentation 변형(shift/rot/scale/shear)으로 전이 세트 자동 생성
+- **왜** ① 사외에서 OpenAI로 개발할 때 반출 문제가 사라진다. ② **정답을 아는 데이터**이므로 F-36(시연 재현)·F-37(전이)·F-38(민감도)의 임계값을 신뢰성 있게 보정할 수 있다. 실제 이미지로는 "사람이 그은 선"이 정답이라 오차 하한을 알 수 없다.
+- **구현** `benchmarks/synthetic/generate.py` — 시드 고정, `sensitivity="synthetic"` 태그 자동 부여.
+
+### F-79. 프로바이더 적합성 테스트 & 카세트 리플레이 `P1`
+- **무엇** 새 백엔드를 역할에 바인딩하기 **전에** 반드시 통과해야 하는 스위트.
+
+  | # | 항목 | 기대 |
+  |---|---|---|
+  | 1 | 텍스트 왕복 | 200 OK, 본문 추출 성공 |
+  | 2 | 이미지 1장 | 성공 |
+  | 3 | 이미지 4장 | 성공 |
+  | 4 | 이미지 5장 시도 | **전송 전 거부** |
+  | 5 | 장당 상한 초과 이미지 | 자동 열화 후 성공, 또는 명시적 실패 |
+  | 6 | 깨진 JSON 유도 | 3단 복구로 최종 성공 |
+  | 7 | 429 주입 | Retry-After 준수 재시도 |
+  | 8 | 커넥션 재사용 | 20회 호출 시 핸드셰이크 1회 |
+  | 9 | reasoning 파라미터 | 프로바이더 형식대로 전송(페이로드 스냅샷) |
+  | 10 | 민감도 태그 위반 | 외부 백엔드로 `internal` 전송 시 예외 |
+
+- **카세트 리플레이** 셋업 단계에 실제 응답을 녹화해 저장하고, CI에서는 **네트워크 없이 재생**한다. 사내 CI에서 OpenAI에 나갈 수 없고 사외 CI에서 사내 모델에 나갈 수 없으므로, **양쪽 모두를 검증할 수 있는 유일한 방법**이다.
+- **구현** `tests/llm/conformance/` + `cassettes/<backend>/*.json`.
 
 ---
 
@@ -1133,19 +1212,246 @@ messages = [
 
 ---
 
-## 5.5 구현 체크리스트
+## 5.5 ★ 배포 프로파일 — 초기 개발은 OpenAI, 운영은 사내 모델
 
-- [ ] `platform/llm/` 패키지 생성 (`backends / roles / transport / policy / structured / image_payload / image_budget / map_reduce / cache / telemetry`)
-- [ ] `report-search`의 `model_client.py` 이식 — 텍스트 경로는 **동작 동등성 테스트**로 검증
-- [ ] 멀티모달 확장: content parts 조립, 4장 강제, 200MB/소프트 상한 검사
-- [ ] 프로바이더 정책 테이블에 `gemma4`, `gausso4_1` 만 등록 (`gpt_oss`/`openai_compat`는 테스트용으로만)
-- [ ] 역할 레지스트리 5.2.2로 구성 + 기동 시 검증
-- [ ] 프롬프트 디렉터리 + 버전 관리
-- [ ] 테스트: 프로바이더 페이로드 스냅샷 / JSON 3단 복구 / 429 재시도 / 커넥션 재사용 / **이미지 4장 초과 거부** / **base64 후 크기 검사** / 콘택트 시트 좌표 역변환 / 맵리듀스 병합 결정론성
+### 5.5.1 왜 프로파일이 필요한가
+
+| | **초기 개발/셋업 단계** | **본 개발 · 운영 단계** |
+|---|---|---|
+| 위치 | **사외망** | **사내망** |
+| 사용 모델 | **OpenAI API** | **Gemma4 / GaussO4.1** |
+| 이유 | 사내 모델은 사외에서 호출 불가. 엔드포인트가 준비되기 전에도 파이프라인 전체를 굴려봐야 한다 | 최종 운영 대상 |
+| 데이터 | **합성/비민감 픽스처만** (F-78) | 실제 계측 이미지 |
+
+> **핵심 요구사항** OpenAI 모드로 도는 동안에는 Gemma4 / GaussO4.1을 **한 번도 호출하지 않아야** 한다. 단순히 "폴백이 안 걸리기를 기대"하는 수준이 아니라, 그 백엔드가 **애초에 구성되지 않아 호출 경로가 존재하지 않는** 상태여야 한다.
+
+### 5.5.2 역할은 백엔드가 아니라 "능력"을 선언한다
+
+모델 교체를 쉽게 만드는 유일한 방법은 **역할이 특정 모델 이름을 알지 못하게** 하는 것이다. 그래서 3층으로 나눈다.
+
+```
+  ① Role (용도)          "planner", "intent_enrich", ...
+        │  선언: 필요한 능력 (needs_multimodal, needs_reasoning, tier, max_images)
+        ▼
+  ② Profile (배포 환경)   dev_openai | onprem | (미래: hybrid, onprem_v2, ...)
+        │  제공: role → backend 바인딩 표
+        ▼
+  ③ Backend (실체)       gemma4 | gausso4_1 | openai_vision | openai_reasoning
+        │  참조: ProviderPolicy (파라미터 전송 규약)
+        ▼
+     Transport (공통)     헤더 · 풀 · 타임아웃 · 재시도  ← 모든 백엔드가 공유
+```
+
+**RoleSpec에 백엔드 이름을 쓰지 않는다.** 대신 능력 요구사항을 쓴다.
+
+```python
+@dataclass(frozen=True)
+class RoleSpec:
+    role: str
+    tier: str                 # "fast" | "deep"
+    needs_multimodal: bool
+    needs_reasoning: bool
+    max_images: int           # 이 역할이 쓸 수 있는 최대 이미지 수 (≤ 전역 상한)
+    max_tokens: int
+    reasoning_mode: str | None    # 능력이 없는 백엔드에 바인딩되면 무시됨
+    thinking_budget: int | None = None
+```
+
+`resolve_role(role) -> ResolvedRole` 이 **현재 프로파일의 바인딩 표**를 보고 백엔드를 결정한다. 애플리케이션 코드는 끝까지 `make_role_client(user_id, "planner")` 만 호출하며, 어떤 모델이 붙었는지 **알 필요도 없고 알아서도 안 된다**.
+
+### 5.5.3 프로파일별 바인딩 표
+
+| role | tier | 멀티모달 | 추론 | **onprem** | **dev_openai** |
+|---|---|---|---|---|---|
+| `intent_enrich` | fast | ✅ | — | `gemma4` | `openai_vision` |
+| `clarify_options` | fast | ✅ | — | `gemma4` | `openai_vision` |
+| `pattern_verify` | fast | ✅ | — | `gemma4` | `openai_vision` |
+| `legacy_import` | fast | ✅ | — | `gemma4` | `openai_vision` |
+| `naming` | fast | — | — | `gemma4` | `openai_vision` |
+| `qc_triage` | fast | ✅ | — | `gemma4` | `openai_vision` |
+| `planner` | deep | — | ✅ | `gausso4_1` | `openai_reasoning` |
+| `plan_repair` | deep | — | ✅ | `gausso4_1` | `openai_reasoning` |
+| `custom_step` | deep | — | ✅ | `gausso4_1` | `openai_reasoning` |
+| `judge` | deep | ✅ | ✅ | `gausso4_1` | `openai_reasoning` |
+| `json_repair` | fast | — | — | `gemma4` | `openai_vision` |
+| `readback_polish` | fast | — | — | `gemma4` | `openai_vision` |
+
+프로파일 선택은 **환경변수 한 개**다.
+
+```bash
+LLM_DEPLOYMENT_PROFILE=dev_openai   # 초기 셋업 (사외)
+LLM_DEPLOYMENT_PROFILE=onprem       # 본 개발 · 운영 (사내)
+```
+
+**개별 역할만 다른 백엔드로 빼는 것도 가능**하다 (`<ROLE>_BACKEND` 가 프로파일 바인딩을 덮어쓴다). 예: 사내에서 planner만 새 모델로 A/B 하고 싶을 때 `PLANNER_BACKEND=gausso5` 한 줄.
+
+### 5.5.4 프로바이더 정책 — OpenAI는 무엇이 다른가
+
+`ProviderPolicy` 테이블에 `openai` 행을 추가하는 것으로 끝난다. **차이가 정책 테이블 한 줄에 흡수되는 것이 이 설계의 목적이다.**
+
+| 항목 | **Gemma4** | **GaussO4.1** | **OpenAI (신규)** |
+|---|---|---|---|
+| `reasoning_control` | omit | explicit | explicit |
+| `reasoning_style` | none | `effort` (**`extra_body`** 로 전송) | `effort_native` (**최상위 파라미터**) |
+| `supports_response_format` | ❌ | ❌ | ✅ (`json_schema` strict) |
+| `token_param` | `max_tokens` | `max_tokens` | **`max_completion_tokens`** |
+| `send_temperature` | ✅ | ✅ | 추론 모델은 ❌ (기본값 외 거부) |
+| 인증 | `x-dep-ticket` + 사내 헤더 | 동일 | `Authorization: Bearer <key>` |
+| 사내 트레이스 헤더 | 필수 | 필수 | **보내지 않음** |
+| 이미지 장당 상한 | 200MB | 200MB | 벤더 상한이 훨씬 작음 → **min() 적용** |
+
+> **주목** `report-search`의 `ProviderPolicy`에 이미 `token_param` 필드가 있다. 이는 프로바이더마다 토큰 파라미터 이름이 다를 수 있음을 처음부터 전제한 설계이고, OpenAI의 `max_completion_tokens` 가 정확히 그 사례다. **정책 테이블을 그대로 계승하는 것만으로 OpenAI 대응의 절반이 끝난다.**
+
+헤더 생성도 정책에 위임한다.
+
+```python
+def connection_headers(backend, user_id) -> dict:
+    if backend.policy.auth_style == "dep_ticket":      # 사내 게이트웨이
+        return {"Send-System-Name": ..., "User-Id": ..., "User-Type": ..., "x-dep-ticket": ...}
+    return {}                                          # OpenAI: SDK가 Bearer 처리
+```
+
+### 5.5.5 ★ 능력 하한 (Capability Floor) — 개발/운영 동작 괴리 차단
+
+**가장 위험한 함정**: OpenAI는 `response_format` strict JSON Schema를 지원하고 이미지도 더 많이 받는다. 개발 중 그 능력에 기대어 코드를 짜면, 사내 전환 시 **한 번도 실행된 적 없는 폴백 경로**가 처음 돌게 된다. 그러면 초기 셋업의 의미가 사라진다.
+
+→ **기본값으로 dev_openai 프로파일에서도 사내 모델의 능력 하한을 강제**한다.
+
+```bash
+LLM_CAPABILITY_FLOOR=onprem   # 기본값. OpenAI를 쓰더라도 사내 능력 수준으로 낮춰 동작
+```
+
+이 설정이 켜져 있으면 dev_openai에서도:
+
+| 강제 항목 | 효과 |
+|---|---|
+| `supports_response_format=False` | **JSON 3단 복구 경로(5.1.4)가 개발 중 항상 실행된다** |
+| 이미지 ≤ 4장 | 슬롯 플래너·콘택트 시트·맵리듀스가 개발 중 항상 실행된다 |
+| 장당 크기 = `min(200MB, 벤더 상한, 소프트 상한)` | 열화 루프가 개발 중 실행된다 |
+| reasoning 파라미터 정규화 | `minimal/medium/high` 를 프로바이더 형식으로 변환하는 경로가 항상 실행된다 |
+
+`LLM_CAPABILITY_FLOOR=native` 로 바꾸면 OpenAI의 원래 능력을 쓴다. 이는 **"strict JSON이 있었다면 얼마나 좋아지는가"를 측정하는 비교 실험용**이며, 일상 개발의 기본값이 아니다.
+
+> 한 줄 원칙: **개발은 운영보다 쉬워서는 안 된다.**
+
+### 5.5.6 제약 패리티 — 4장 / 크기 제한은 프로파일과 무관
+
+이미지 제약은 **백엔드의 속성이 아니라 시스템의 계약**으로 취급한다.
+
+```
+effective_max_images      = min(전역 4, role.max_images, backend.vendor_max_images)
+effective_per_image_bytes = min(하드 200MB, 소프트 6MB, backend.vendor_max_bytes)
+```
+
+- 전역 상한 4는 **프로파일이 무엇이든 바뀌지 않는다**. OpenAI가 10장을 받아도 4장만 보낸다.
+- 벤더 상한이 더 낮으면 그쪽을 따른다(OpenAI의 장당 크기 상한은 200MB보다 훨씬 작다).
+- 초과 시 동작(열화 → 타일 분할 → 슬롯 제외)은 두 프로파일에서 **동일한 코드 경로**를 탄다.
+
+### 5.5.7 미구성 백엔드 접근 차단 (Fail-Fast)
+
+```python
+def build_backend(key: str) -> BackendSpec:
+    spec = PROFILE_BINDINGS[current_profile()].get(key)
+    if spec is None or not spec.base_url:
+        raise LLMBackendUnavailable(
+            f"backend '{key}' is not configured in profile '{current_profile()}'. "
+            f"사내 백엔드는 dev_openai 프로파일에서 구성되지 않습니다."
+        )
+    return spec
+```
+
+- **dev_openai 프로파일에서는 `gemma4` / `gausso4_1` 백엔드 객체가 아예 생성되지 않는다.** 어떤 경로로도 사내 엔드포인트에 HTTP 요청이 나가지 않는다.
+- 기동 시 `validate_llm_role_registry()` 가 **모든 역할이 현재 프로파일에서 해소되는지** 검사하고, 하나라도 실패하면 **서버가 뜨지 않는다**. 런타임에 조용히 다른 모델로 흐르는 일이 없다.
+- 폴백(F-71)도 **같은 프로파일 안에서만** 동작한다. dev_openai에서 `openai_vision` 이 실패해도 `gemma4` 로 넘어가지 않는다 — 넘어갈 곳 자체가 없다.
+
+### 5.5.8 ★ 이그레스 가드 — 계측 이미지의 사외 반출 통제
+
+OpenAI 모드는 **이미지를 사외로 내보낸다**. 반도체 계측 마스크는 공정 정보 그 자체이므로, 이 부분은 편의 기능이 아니라 **안전장치**로 설계한다.
+
+**데이터 민감도 태깅**
+
+| 태그 | 의미 | 사외 전송 |
+|---|---|---|
+| `synthetic` | F-78 생성기가 만든 합성 데이터 | ✅ 허용 |
+| `public` | 공개 샘플/논문 이미지 | ✅ 허용 |
+| `internal` | 실제 계측 이미지 | ❌ **차단** |
+
+**강제 지점**
+1. 이미지 페이로드 파이프라인(F-63)이 `ImagePart` 에 `sensitivity` 를 붙인다(데이터셋 등록 시 지정, 기본값 `internal`).
+2. 전송 계층은 `backend.egress == "external"` 인데 `sensitivity == "internal"` 인 파트가 하나라도 있으면 **요청을 거부**한다. 잘라내지 않고 **거부**한다.
+3. `LLM_EXTERNAL_EGRESS=deny` (운영 기본값)이면 외부 백엔드 자체를 구성하지 않는다.
+4. 텍스트도 검사 대상이다 — MIR에 실제 파일명·로트 ID가 들어가므로, 외부 백엔드로 나갈 때는 **식별자 익명화 필터**(`C2024_...` → `img_a1b2`)를 통과시키고 매핑을 로컬에만 보관한다.
+
+> 이 통제 덕분에 초기 셋업 단계는 **실제 데이터 없이도 완결**된다. 그것이 F-78이 필요한 이유다.
+
+---
+
+## 5.6 모델 추가 · 교체 절차
+
+향후 새 모델(예: GaussO5, Gemma5, 다른 벤더)이 추가될 때 **코드 수정 범위를 3곳으로 한정**한다.
+
+| 단계 | 파일 | 작업 | 예상 분량 |
+|---|---|---|---|
+| ① 정책 | `platform/llm/policy.py` | `ProviderPolicy` 행 1개 추가 (reasoning 형식, response_format, token 파라미터, 인증 방식, 벤더 이미지 상한) | 10줄 |
+| ② 백엔드 | `platform/llm/backends.py` + `.env` | `BackendSpec` 1개 + 환경변수 5개 | 10줄 |
+| ③ 바인딩 | `platform/llm/profiles.py` | 프로파일 표의 role→backend 항목 수정, 또는 `<ROLE>_BACKEND` 로 런타임 오버라이드 | 1줄 |
+
+**그 외 어떤 코드도 고치지 않는다.** 프롬프트, 슬롯 플래너, JSON 복구, 검증 게이트, 렌더러는 모델을 모른다.
+
+**새 백엔드 승인 절차 (게이트)**
+1. **적합성 테스트 통과** (F-79) — 텍스트 왕복 / 이미지 1·4장 / 5장 거부 / JSON 3단 복구 / 429 재시도 / 큰 이미지 열화. 이 스위트를 통과하지 못한 백엔드는 어떤 역할에도 바인딩할 수 없다.
+2. **회귀 세트 실행** (B4/B5) — 기존 모델 대비 KPI 변화 리포트.
+3. **역할 단위 점진 전환** — 전체를 한 번에 바꾸지 않는다. `<ROLE>_BACKEND` 로 한 역할씩 옮기며 K3~K6을 관찰한다.
+4. **롤백** — 환경변수 되돌리기 + 재기동. 코드 배포 불필요.
+
+**교체가 쉬운지 확인하는 인수 조건**
+> 새 모델을 붙이는 PR의 diff가 **`policy.py` + `backends.py` + `.env.example` + 테스트 픽스처**에만 닿아야 한다. 다른 파일이 바뀌었다면 추상화가 샌 것이므로 설계 결함으로 간주한다.
+
+---
+
+## 5.7 구현 체크리스트
+
+**순서가 중요하다.** 초기 셋업은 사외에서 진행하므로 ①~⑥을 OpenAI 프로파일로 먼저 완주하고, 사내 진입 후 ⑦에서 프로파일만 바꾼다.
+
+- [ ] ① `platform/llm/` 패키지 생성 (`profiles / backends / roles / policy / transport / structured / image_payload / image_budget / contact_sheet / map_reduce / cache / telemetry / egress`)
+- [ ] ② `report-search`의 `model_client.py` 이식 — 텍스트 경로는 **동작 동등성 테스트**로 검증
+- [ ] ③ **역할 = 능력 선언** 구조로 재작성 (RoleSpec에 백엔드 이름 없음, 5.5.2)
+- [ ] ④ 프로바이더 정책 3행 등록: `gemma4`, `gausso4_1`, **`openai`** — 헤더 생성도 정책에 위임
+- [ ] ⑤ **`dev_openai` 프로파일로 전체 파이프라인 완주** (합성 데이터 F-78 사용, 능력 하한 ON)
+- [ ] ⑥ 멀티모달: content parts 조립, **4장 강제**, base64 후 크기 검사, 콘택트 시트, 변환 메타
+- [ ] ⑦ 사내 진입 후 `LLM_DEPLOYMENT_PROFILE=onprem` 으로 전환 → **코드 변경 없이** 동일 시나리오 재현되는지 확인
+- [ ] 이그레스 가드(F-77): 민감도 태깅 + 외부 전송 거부 + 식별자 익명화
+- [ ] 프롬프트 디렉터리 + 버전 관리 (`prompts/<role>/<version>.md`)
+- [ ] 적합성 스위트(F-79) + 카세트 녹화/재생
+- [ ] 테스트: 프로바이더 페이로드 스냅샷 / JSON 3단 복구 / 429 재시도 / 커넥션 재사용 / **이미지 4장 초과 거부** / **base64 후 크기 검사** / 콘택트 시트 좌표 역변환 / 맵리듀스 병합 결정론성 / **프로파일 간 slot_plan 동일성** / **dev_openai에서 사내 엔드포인트 무호출**
 - [ ] `.env.example` 작성 (아래)
 
 ```bash
-# --- 공통 게이트웨이 ---
+# =====================================================================
+# 배포 프로파일 — 이 한 줄이 전체 모델 배선을 결정한다
+#   dev_openai : 초기 셋업(사외). OpenAI만 사용. 사내 모델은 구성조차 되지 않음
+#   onprem     : 본 개발·운영(사내). Gemma4 / GaussO4.1만 사용
+# =====================================================================
+LLM_DEPLOYMENT_PROFILE=dev_openai
+
+# 능력 하한. onprem = OpenAI를 써도 사내 모델 수준으로 낮춰 동작(기본값, 권장)
+#            native = OpenAI 원래 능력 사용(비교 실험용)
+LLM_CAPABILITY_FLOOR=onprem
+
+# 외부망 전송 허용 여부. onprem 운영에서는 deny 고정
+LLM_EXTERNAL_EGRESS=allow          # dev_openai 에서만 allow
+LLM_ALLOWED_SENSITIVITY=synthetic,public   # 외부 백엔드로 나갈 수 있는 데이터 등급
+
+# --- [dev_openai 프로파일] OpenAI ---
+# 모델 ID는 벤더 라인업이 바뀌므로 설정값으로 둔다.
+#   OPENAI_VISION_MODEL    : 멀티모달 입력 지원 모델 (gemma4 자리)
+#   OPENAI_REASONING_MODEL : 추론 강도 제어 지원 모델 (gausso4.1 자리)
+OPENAI_API_KEY=
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_VISION_MODEL=
+OPENAI_REASONING_MODEL=
+
+# --- [onprem 프로파일] 공통 게이트웨이 ---
 SEND_SYSTEM_NAME=ScribbleMetro
 USER_ID=
 USER_TYPE=
@@ -1164,10 +1470,11 @@ GAUSSO4_1_LLM_API_KEY=EMPTY
 GAUSSO4_1_LLM_TICKET=
 GAUSSO4_1_LLM_API_PROFILE=gausso4_1
 
-# --- 역할 라우팅 (기본값 재정의용) ---
-PLANNER_BACKEND=gausso4_1
-INTENT_ENRICH_BACKEND=gemma4
-JSON_REPAIR_BACKEND=gemma4
+# --- 역할 라우팅 (프로파일 바인딩을 개별 덮어쓰기; 모델 A/B·점진 전환용) ---
+# 비워 두면 LLM_DEPLOYMENT_PROFILE 의 바인딩 표를 따른다.
+# PLANNER_BACKEND=
+# INTENT_ENRICH_BACKEND=
+# JSON_REPAIR_BACKEND=
 
 # --- 추론 예산 ---
 LLM_DEFAULT_REASONING=minimal
@@ -1209,7 +1516,8 @@ LLM_CONTACT_SHEET_MIN_CELL_PX=256
 | 코드 검증 | `ast`, `libcst`, `ruff`, `black` | 정적 게이트 |
 | 테스트 | pytest, playwright(E2E) | 연산자 단위 테스트가 시스템 신뢰의 기반 |
 | 실행 격리 | Docker(sandbox-runner) 또는 rlimit+격리유저 | 생성 코드 실행 안전 |
-| 모델 | **Gemma4** (멀티모달 인식) / **GaussO4.1** (추론·계획) — 사내 OpenAI 호환 게이트웨이 | 사용 가능한 2종으로 확정. 상세 Part 5 |
+| 모델 (운영) | **Gemma4** (멀티모달 인식) / **GaussO4.1** (추론·계획) — 사내 OpenAI 호환 게이트웨이 | 운영 대상 2종. 상세 Part 5 |
+| 모델 (초기 셋업) | **OpenAI API** (`openai_vision` / `openai_reasoning`) | 사내 모델은 사외 호출 불가 → 프로파일로 대체 (5.5) |
 | 모델 SDK | `openai` (OpenAI 호환) + `httpx` 커넥션 풀 | `report-search/app/model_client.py` 패턴 이식 |
 | 이미지 페이로드 | OpenCV + Pillow → PNG/JPEG → base64 data URL | 4장·200MB 제약 준수 (F-63/F-64) |
 
@@ -1233,9 +1541,11 @@ scribblemetro/
 │   ├── knowledge/           # 레시피/few-shot 저장소, 검색, ops 승격
 │   └── platform/            # 설정, DB, 큐, 로깅
 │       └── llm/             # ★ 모델 API 계층 (Part 5)
-│           ├── backends.py      # BackendSpec: gemma4 / gausso4_1
-│           ├── roles.py         # RoleSpec + resolve_role + 기동 검증
-│           ├── policy.py        # ProviderPolicy (reasoning/response_format/token param)
+│           ├── profiles.py      # ★ 배포 프로파일: dev_openai / onprem 바인딩 표
+│           ├── backends.py      # BackendSpec: gemma4 / gausso4_1 / openai_vision / openai_reasoning
+│           ├── roles.py         # RoleSpec(능력 선언) + resolve_role + 기동 검증
+│           ├── policy.py        # ProviderPolicy (reasoning/response_format/token param/auth/벤더 상한)
+│           ├── egress.py        # ★ 민감도 태그 검사 · 식별자 익명화 · 외부 전송 차단
 │           ├── transport.py     # OpenAI 클라이언트, 헤더, 풀 캐시, 타임아웃, 429 재시도
 │           ├── structured.py    # JSON 3단 복구 + Pydantic 스키마 검증 + 부분 재질의
 │           ├── image_payload.py # 리사이즈/인코딩/base64/200MB 검사/변환 메타
@@ -1256,9 +1566,11 @@ scribblemetro/
 ### M0 — 기반 정비 (2주)
 - 리포지토리 재구성, 설정/시크릿 외부화, DB 스키마, 작업 큐, 로깅.
 - **기존 코드 이관**: 스크리블 CV 추출, meta 로더, CSV 정규화, few-shot 저장소, 전이 평가 스크립트를 각 패키지로 분해 이식.
-- **★ 모델 API 계층 구축 (Part 5)**: `report-search/app/model_client.py` 패턴 이식 → Gemma4/GaussO4.1 백엔드·역할 레지스트리, 전송 계층, reasoning 정책, JSON 3단 복구, **이미지 페이로드 파이프라인(200MB) + 4장 슬롯 플래너**. 이 시점에 두 모델 엔드포인트로 **왕복 스모크 테스트**를 통과시켜 둔다(뒤 마일스톤이 전부 여기에 의존한다).
-- 산출: 빈 화면이지만 이미지 목록/뷰가 뜨고 배치 잡이 큐를 통해 돌며, 두 모델에 이미지 첨부 호출이 성공한다.
-- 관련: F-48, F-49, F-50, F-14, **F-59~F-64, F-67, F-71**
+- **★ 모델 API 계층 구축 (Part 5)**: `report-search/app/model_client.py` 패턴 이식 → 역할(능력 선언)·프로파일·백엔드 3층 구조, 전송 계층, reasoning 정책, JSON 3단 복구, **이미지 페이로드 파이프라인(200MB) + 4장 슬롯 플래너**.
+- **★ 이 단계는 사외에서 `dev_openai` 프로파일로 수행한다.** 사내 엔드포인트가 준비되기 전에도 파이프라인 전체를 굴릴 수 있어야 하므로, **합성 픽스처 데이터(F-78)를 M0에서 함께 만든다.** 능력 하한(F-75)은 처음부터 ON으로 두어 3단 JSON 복구·4장 슬롯·열화 루프가 개발 내내 실행되게 한다.
+- **사내 전환 리허설**: `onprem` 프로파일 배선과 적합성 스위트(F-79)를 미리 작성해 두고, 사내 진입 즉시 환경변수만 바꿔 검증할 수 있게 준비한다.
+- 산출: 빈 화면이지만 이미지 목록/뷰가 뜨고 배치 잡이 큐를 통해 돌며, **OpenAI에 합성 이미지 4장 첨부 호출이 성공**한다.
+- 관련: F-48~F-50, F-14, **F-59~F-67, F-71, F-73~F-79**
 
 ### M1 — 드로잉 캔버스 MVP (3주)
 - F-01, F-02, F-03, F-04, F-05 + F-06(스냅 1차: 경계·특징점·기존 선).
@@ -1285,7 +1597,8 @@ scribblemetro/
 
 ### M6 — 품질 고도화 (지속)
 - F-38(민감도), F-39(Best-of-N), F-24(서브픽셀), F-32(구조 유사도 검색), F-41(ops 승격), F-19(대화형 편집), F-21(클래스 사전), F-40(레시피 카드), F-52~F-54.
-- 모델 계층 고도화: F-65(콘택트 시트 최적화), F-66(맵리듀스), F-68(캐시), F-69(예산 가드), F-70(프롬프트 회귀 스위트), F-72(페이로드 보안).
+- 모델 계층 고도화: F-65(콘택트 시트 최적화), F-66(맵리듀스), F-68(캐시), F-69(예산 가드), F-70(프롬프트 회귀 스위트), F-72(페이로드 보안), F-79(적합성 스위트 확장).
+- **사내 전환 완료 후**: 프로파일 전환 리포트(동일 시나리오의 dev_openai vs onprem KPI 비교)를 작성해 격차 원인을 정리한다. 이 리포트가 이후 모델 교체 때의 기준선이 된다.
 - 벤치마크 확장 및 프롬프트/모델 회귀 테스트 정착.
 
 **총 소요: 약 18주 (M0~M5) + 지속 개선** — M0가 2주에서 3주로 늘어날 수 있다(모델 API 계층 포함). 다만 이 투자는 M2 이후 모든 마일스톤이 재사용하므로 회수된다.
@@ -1310,7 +1623,8 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 - **B2 전이 세트**: 각 공정당 실이미지 10~30장(시연에 쓰지 않은 것) + 정답 측정값.
 - **B3 스트레스 세트**: augmentation 자동 생성(시드 고정) + 저품질/결손 마스크 포함.
 - **B4 회귀 세트**: 과거 실패 사례 아카이브(모델·프롬프트 변경 시 반드시 통과).
-- **B5 모델 계약 세트**: 프로바이더별 요청 페이로드 스냅샷, 깨진 JSON 응답 10종, 429/타임아웃 주입, 초대형 이미지(>200MB 원본) 및 5장 첨부 시도 — **모델을 실제로 호출하지 않고** 전송 계층만 검증하는 오프라인 스위트.
+- **B5 모델 계약 세트**: 프로바이더별(gemma4 / gausso4_1 / openai) 요청 페이로드 스냅샷, 깨진 JSON 응답 10종, 429/타임아웃 주입, 초대형 이미지(>200MB 원본) 및 5장 첨부 시도, 민감도 태그 위반 — **모델을 실제로 호출하지 않고** 전송 계층만 검증하는 오프라인 스위트. 카세트 리플레이(F-79)로 CI에서 네트워크 없이 실행된다.
+- **B6 합성 세트**: F-78 생성기의 산출물. **정답 앵커 위치가 수학적으로 알려져 있으므로** 재현·전이·민감도 임계값 보정의 기준이 된다. 사외 개발 단계의 유일한 데이터원이기도 하다.
 
 ## 7.2 KPI
 
@@ -1331,12 +1645,18 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | K13 | **구조화 JSON 최종 성공률** | ≥ 99% (3단 복구 + 부분 재질의 포함) | F-62 `structured_json` 이벤트 |
 | K14 | **모델 장애 시 열화 동작** | 드로잉·스냅·측정 실행 100% 정상 | F-71 장애 주입 테스트 |
 | K15 | 커넥션 재사용률 | 연속 20회 호출 시 TLS 핸드셰이크 1회 | F-60 |
+| K16 | **프로파일 전환 무결성** | `dev_openai`↔`onprem` 전환 시 **코드·프롬프트 변경 0줄**, 동일 시나리오 완주 | F-73 |
+| K17 | **프로파일 간 슬롯 계획 동일성** | 100% 일치 (무엇을 몇 장 보냈는가) | F-76 |
+| K18 | **격리 위반** | 0건 (dev_openai에서 사내 호출 / `internal` 데이터 사외 전송) | F-73, F-77 |
+| K19 | **모델 교체 diff 범위** | `policy.py` + `backends.py` + `.env.example` + 픽스처 **4곳 이내** | 5.6 |
 
 ## 7.3 릴리스 게이트
 1. **Draft** — MIR 검증 통과.
 2. **Generated** — 정적검증 + 실행 성공.
 3. **Verified** — 시연 재현 통과 + 전이 통과. *여기서부터 배치 실행 허용.*
 4. **Production** — 리뷰어 승인 + 홀드아웃 실이미지 검증 통과 + 레시피 카드 작성 완료.
+
+> **프로파일 관련 단서** `dev_openai` 프로파일에서 생성된 레시피는 **`Verified` 까지만** 승격할 수 있다. `Production` 승격은 **`onprem` 프로파일에서 실제 계측 이미지로 재검증**해야 한다. 개발용 모델로 만든 레시피가 운영에 그대로 흘러드는 것을 막는 장치다. `run.json`의 `deployment_profile` 필드로 강제한다.
 
 ---
 
@@ -1357,7 +1677,12 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | **`response_format` 미지원 → JSON 파싱 실패** | 높음 | 3단 복구 + Pydantic 검증 + **위반 필드 부분 재질의**(F-62). 최종 실패는 예외로 전파하고 절대 조용히 넘기지 않음 |
 | **Gemma4/GaussO4.1 파라미터 규약 변경** | 중간 | 규약을 `ProviderPolicy` 테이블 1곳에 집중(F-61). 페이로드 스냅샷 테스트(B5)가 회귀를 즉시 잡음 |
 | **모델 엔드포인트 장애·정원 초과** | 중간 | 429 전용 재시도 + Retry-After 준수, 역할별 폴백(Gemma4↔GaussO4.1), 최종적으로 CV-only 열화 경로(F-71) |
-| **모델 교체/버전업 시 품질 회귀** | 중간 | 역할↔백엔드가 환경변수로 분리되어 A/B 가능(F-59) + B4/B5 회귀 스위트 자동 실행(F-70) |
+| **모델 교체/버전업 시 품질 회귀** | 중간 | 역할↔백엔드가 환경변수로 분리되어 A/B 가능(F-59) + B4/B5 회귀 스위트 자동 실행(F-70). 역할 단위 점진 전환 + 환경변수 롤백(5.6) |
+| **개발(OpenAI)과 운영(사내) 동작 괴리** | **높음** | **능력 하한(F-75)을 기본 ON** — strict JSON·다중 이미지 같은 OpenAI 우위 능력을 개발 중 봉인해, 3단 복구·슬롯 플래너·열화 루프가 개발 내내 실행되게 한다. 프로파일 간 slot_plan 동일성(K17)을 테스트로 고정 |
+| **개발 중 사내 모델을 실수로 호출** | 중간 | `dev_openai` 에서 사내 백엔드를 **구성하지 않음**(F-73). 호출 경로 자체가 없고, 기동 시 역할 해소 검증에서 실패하면 서버가 뜨지 않음 |
+| **계측 이미지의 사외 반출** | **높음** | 민감도 태깅 + 전송 계층 거부 + 식별자 익명화(F-77). 초기 셋업은 **합성 데이터(F-78)로만** 수행하므로 실데이터가 사외로 나갈 이유 자체가 없음 |
+| **OpenAI 의존이 굳어져 사내 전환이 미뤄짐** | 중간 | `dev_openai` 산출물은 `Verified` 까지만 승격 가능(7.3). `Production` 은 `onprem` 재검증 필수 — 전환하지 않으면 운영에 못 올린다 |
+| **벤더 모델 라인업 변경으로 ID가 무효화** | 낮음 | 모델 ID를 코드에 넣지 않고 환경변수로만 주입(F-74). 요구 능력(멀티모달/추론 제어)만 문서화 |
 
 ---
 
@@ -1385,7 +1710,8 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | GET/POST | `/api/recipes` | 레시피 레지스트리 (F-47) |
 | POST | `/api/reviews` | 리뷰 수정 환류 (F-45) |
 | GET/POST | `/api/ops` | 연산자 레지스트리 / 승격 (F-41) |
-| GET | `/api/system/llm-routing` | 현재 백엔드·역할 배선 확인 (키/티켓 마스킹, F-59) |
+| GET | `/api/system/llm-routing` | 현재 **프로파일**과 역할→백엔드 배선 확인 (키/티켓 마스킹, F-59/F-73) |
+| GET | `/api/system/llm-conformance` | 현재 프로파일의 적합성 스위트 최근 결과 (F-79) |
 | GET | `/api/system/llm-budget` | 레시피별 모델 호출·이미지·토큰 사용량 (F-69) |
 | POST | `/api/vlm/enrich` | Gemma4 의미 보강 (내부용, 슬롯 플래너 경유, F-27) |
 
@@ -1411,6 +1737,7 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | `_prep_for_vision_llm()` (max_side 1280, JPEG q80) | F-63 이미지 페이로드 파이프라인 (변환 메타 보존 + base64 후 크기 검사) |
 | `_rescale_endpoints_to_original()` | F-67 변환 메타 기반 역변환 (원칙적으로 모델에게 좌표를 묻지 않음) |
 | 인라인 수백 줄 시스템 프롬프트 | `prompts/<role>/<version>.md` 파일 + Plan→Code 구조로 규칙 대부분 불필요 (Part 5.4.2) |
+| `os.environ['OPENAI_API_KEY'] = 'api_key'` (코드 내 리터럴) | 환경변수 + 프로파일 (`dev_openai` 에서만 실제 OpenAI 키 사용, F-50/F-73) |
 
 ## A.3 마이그레이션 전략
 
@@ -1418,8 +1745,11 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 2. **CSV 스키마 동결** — 다운스트림 도구 보호를 위해 13개 표준 컬럼을 그대로 유지, 확장은 추가 컬럼으로만.
 3. **병행 운영 기간** — 신규 시스템이 생성한 코드와 기존 시스템 코드를 같은 이미지에 돌려 값 차이를 비교(회귀 리포트). 차이가 임계 이내일 때 전환.
 4. **연산자 커버리지 선검증** — 착수 직후, 기존 `measure_label/`의 실제 코드 20~30개를 읽어 **어떤 연산이 실제로 쓰였는지 목록화**하고, 그것을 `metro_ops` v1의 스펙으로 삼는다. (설계 리스크를 가장 크게 줄이는 첫 작업)
-5. **모델 전환 검증** — `report-search`의 전송 계층을 이식한 직후, Gemma4·GaussO4.1 두 엔드포인트에 대해 (a) 텍스트 왕복, (b) 이미지 1장 왕복, (c) 이미지 4장 왕복, (d) 5장 시도 시 거부, (e) 200MB 초과 이미지 자동 열화를 **스모크 테스트로 확인**한다. 이 5개가 통과하기 전에는 상위 기능 개발을 시작하지 않는다.
+5. **모델 전환 검증 (2단계)** — 적합성 스위트(F-79)를 **프로파일마다 각각** 통과시킨다.
+   - **5-a. 사외 (`dev_openai`)** — 초기 셋업 시점. OpenAI 백엔드로 10개 항목 전부 통과. 이 시점부터 상위 기능 개발을 시작한다.
+   - **5-b. 사내 (`onprem`)** — 사내 진입 직후. Gemma4·GaussO4.1로 동일한 10개 항목을 통과시키고, **동일 시나리오를 코드 변경 없이 완주**하는지 확인(K16). 여기서 실패하면 그 원인이 곧 추상화의 구멍이다.
 6. **GPU 반납** — 로컬 Qwen3-VL / Grounding DINO 제거로 `CUDA_VISIBLE_DEVICES=0,1,2` 상주 점유가 사라진다. 남는 GPU 자원은 배치 실행(F-42)과 전이 검증(F-37) 병렬화에 재배치한다.
+7. **사외 → 사내 반입 목록** — 초기 셋업 산출물 중 사내로 가져갈 것을 명시한다: 소스 코드, 프롬프트 파일, 합성 픽스처 생성기(F-78), 카세트(사내 재생용은 사내에서 다시 녹화), `.env` 는 **가져가지 않는다**(키·엔드포인트가 전혀 다름). 반대로 실제 계측 이미지·meta·레시피는 **사외로 나가지 않는다**(F-77).
 
 ---
 
@@ -1428,3 +1758,5 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 기존 시스템은 **"그려진 그림에서 의도를 되찾으려" 애썼다.** 신규 시스템은 **"그리는 순간에 의도를 함께 붙잡고", 그것을 검증 가능한 명세로 확정한 뒤, 검증된 연산자만으로 코드를 조립하고, 사람이 그린 것을 실제로 재현하는지 스스로 확인한다.** 나머지 기능은 모두 이 한 줄을 빠르고, 정확하고, 믿을 수 있게 만들기 위한 장치다.
 
 그리고 모델 측면에서 이 전환은 **의존을 줄이는 방향**이다. 사용 가능한 모델이 Gemma4·GaussO4.1 둘뿐이고 한 번에 이미지 4장까지만 보낼 수 있다는 제약은, 역설적으로 이 설계와 잘 맞는다. 의도를 그리는 순간에 붙잡아 두면 **모델에게 보여줄 것이 애초에 적기 때문**이다. 기존 시스템은 이미지 3장을 매번 VLM에 밀어 넣고 그 안에서 의미를 찾아내야 했지만, 신규 시스템의 정상 경로에서는 이미지 호출이 **0~2회**에 그친다.
+
+마지막으로, 어떤 모델을 쓰는지는 이 시스템의 **설정값이지 정체성이 아니다.** 초기 셋업은 사외에서 OpenAI로, 본 개발과 운영은 사내에서 Gemma4·GaussO4.1로, 그리고 언젠가 또 다른 모델로 — 전환은 매번 **환경변수 한 줄**이어야 한다. 그것이 안 되는 순간이 오면, 고쳐야 할 것은 모델이 아니라 추상화다.
