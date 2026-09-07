@@ -11,11 +11,12 @@
 - [Part 0. 문서의 목적과 읽는 법](#part-0-문서의-목적과-읽는-법)
 - [Part 1. 기존 시스템(As-Is) 완전 분석](#part-1-기존-시스템as-is-완전-분석)
 - [Part 2. 신규 시스템(To-Be) 컨셉과 아키텍처](#part-2-신규-시스템to-be-컨셉과-아키텍처)
-- [Part 3. 전체 기능 명세 (F-01 ~ F-58)](#part-3-전체-기능-명세)
+- [Part 3. 전체 기능 명세 (F-01 ~ F-72)](#part-3-전체-기능-명세)
 - [Part 4. 핵심 데이터 모델](#part-4-핵심-데이터-모델)
-- [Part 5. 구현 계획 (모듈 · 기술스택 · 마일스톤)](#part-5-구현-계획)
-- [Part 6. 평가 체계와 완료 기준](#part-6-평가-체계와-완료-기준)
-- [Part 7. 리스크와 대응](#part-7-리스크와-대응)
+- [Part 5. ★ 모델 API 통합 설계 (Gemma4 / GaussO4.1)](#part-5--모델-api-통합-설계-gemma4--gausso41)
+- [Part 6. 구현 계획 (모듈 · 기술스택 · 마일스톤)](#part-6-구현-계획)
+- [Part 7. 평가 체계와 완료 기준](#part-7-평가-체계와-완료-기준)
+- [Part 8. 리스크와 대응](#part-8-리스크와-대응)
 - [부록 A. API 목록 / 디렉터리 구조 / 마이그레이션](#부록-a-api-목록--디렉터리-구조--마이그레이션)
 
 ---
@@ -25,9 +26,9 @@
 이 문서는 두 가지를 한 번에 담는다.
 
 1. **기존 저장소가 무엇을 만들려고 했는지**를 코드의 세부 구현이 아니라 **설계 의도와 시스템 구조 수준**에서 정리한다. (Part 1)
-2. 그 컨셉을 계승하되, **"사용자가 그림판처럼 스크리블을 그리면 측정 코드를 만들어주는 Agent"** 라는 목표에 맞춰 **새로 개발할 시스템의 전체 기능과 구현 계획**을 정의한다. (Part 2~7)
+2. 그 컨셉을 계승하되, **"사용자가 그림판처럼 스크리블을 그리면 측정 코드를 만들어주는 Agent"** 라는 목표에 맞춰 **새로 개발할 시스템의 전체 기능과 구현 계획**을 정의한다. (Part 2~8)
 
-Part 3의 기능들은 모두 `F-xx` 번호를 가진다. Part 5의 마일스톤과 Part 6의 KPI가 이 번호를 참조하므로, 개발 착수 시 이 번호를 그대로 이슈 트래커의 Epic/Story 키로 사용하면 된다.
+Part 3의 기능들은 모두 `F-xx` 번호를 가진다. (F-01~F-58은 제품 기능, F-59~F-72는 모델 API 통합 기능으로 Part 5에서 상세히 다룬다.) Part 6의 마일스톤과 Part 7의 KPI가 이 번호를 참조하므로, 개발 착수 시 이 번호를 그대로 이슈 트래커의 Epic/Story 키로 사용하면 된다.
 
 **우선순위 표기**
 - `P0` — MVP 필수. 이것이 없으면 시스템이 성립하지 않음.
@@ -135,6 +136,8 @@ meta_tag, component_label, image_name, run_id, note
 | 코드 생성 | gpt-oss-120b / GaussO-Think | 사내 OpenAI 호환 게이트웨이 |
 | 보조 설명 | Gemma3-27B, Llama-4-Maverick | 사내 게이트웨이 |
 
+> **신규 시스템에서는 위 5종 모델을 전부 폐기하고 Gemma4 · GaussO4.1 두 개만 사용한다.** 로컬 HuggingFace 추론(Qwen3-VL, Grounding DINO)도 제거되어 GPU 상주 부담이 사라진다. 상세 설계는 [Part 5](#part-5--모델-api-통합-설계-gemma4--gausso41).
+
 ### (e) 안전장치 (이 시스템이 실제로 싸우고 있던 문제들)
 기존 코드가 방어하려 한 실패 모드는 신규 설계의 요구사항 그 자체다.
 
@@ -168,7 +171,9 @@ meta_tag, component_label, image_name, run_id, note
 | 7 | **상태가 프로세스 메모리** | `SESSIONS`, `CODE_BACKUPS`, `STRUCTURED_DIFF_CACHE`가 dict. 재시작하면 사라진다. | SQLite/Postgres 영속화 + 이력 관리 (F-48) |
 | 8 | **환경 이식성** | Windows 절대경로 하드코딩(`D:\aip-expert\...`), API 키 리터럴(`os.environ['OPENAI_API_KEY']='api_key'`). | 설정 주입 + 시크릿 관리 + Docker (F-50, F-52) |
 | 9 | **동기 블로킹 · 폴링** | VLM 추론과 subprocess 실행이 요청 스레드를 막고, 진행률은 `/run/status` 폴링. | 작업 큐 + SSE 스트리밍 (F-49) |
-| 10 | **단일 파일 5,400줄** | 테스트 불가, 변경 시 회귀 위험. | 레이어드 패키지 구조 + 단위 테스트 (Part 5) |
+| 10 | **단일 파일 5,400줄** | 테스트 불가, 변경 시 회귀 위험. | 레이어드 패키지 구조 + 단위 테스트 (Part 6) |
+| 11 | **모델이 5종으로 흩어짐** | Qwen3-VL(로컬 GPU) + DINO(로컬 GPU) + GPT-OSS + GaussO + Gemma3/Llama4. 각각 호출 방식이 제각각이고 GPU 3장을 상주 점유한다. | **Gemma4 / GaussO4.1 2종으로 통일.** 로컬 GPU 추론 제거, 전송 계층 단일화 (Part 5) |
+| 12 | **이미지 페이로드 관리 부재** | `MAX_IMAGES_PER_PROMPT = 5` 상수만 있고 실제 강제·크기 검사·좌표 역변환 관리가 없다. | 슬롯 예산 플래너 + 크기 파이프라인 + 변환 메타 (F-63~F-67) |
 
 ---
 
@@ -199,6 +204,7 @@ meta_tag, component_label, image_name, run_id, note
 | **Nothing ships unverified** | 실행 성공 · 시연 재현 · 전이 안정성 — 3개 게이트를 통과해야 "완료"다. |
 | **Human in the right loop** | 사람은 코드를 고치지 않는다. **의도를 확인·수정**한다. 수정은 항상 MIR 레벨에서 일어난다. |
 | **Everything is versioned** | 이미지, MIR, 코드, 모델, 프롬프트, 실행 결과가 모두 해시로 묶여 재현 가능하다. |
+| **Models accelerate, never gate** | 모델 호출은 품질을 높이는 가속기다. 모델이 죽어도 드로잉·스냅·패턴검출·측정 실행은 전부 동작해야 한다. (F-71) |
 
 ## 2.3 아키텍처
 
@@ -228,7 +234,7 @@ meta_tag, component_label, image_name, run_id, note
 │                           · 민감도 분석        · 평가 벤치마크       │
 ├──────────────────────────────────────────────────────────────────────┤
 │ Storage: SQLite/Postgres(메타·이력) + 오브젝트 스토리지(이미지·산출물)│
-│ Model Router: VLM / Reasoning LLM / 소형 분류 모델 (교체 가능)        │
+│ Model Router: Gemma4(멀티모달 인식) / GaussO4.1(추론·계획)  ← Part 5   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -435,15 +441,17 @@ meta_tag, component_label, image_name, run_id, note
 ### F-26. 반복/대칭 구조 검출기 `P0`
 - F-11의 백엔드. 자기상관 주기 추정 + NCC 피크 + 연결요소 분할의 앙상블. 결과는 인스턴스 리스트(각각 ROI + 인덱스 + 매칭 점수).
 
-### F-27. VLM 의미 보강 (선택적 보조) `P1`
-- **역할 재정의**: 기존 시스템에서 VLM은 **필수 경로**였다. 신규 시스템에서 VLM은 **보조**다.
+### F-27. 멀티모달 의미 보강 (Gemma4, 선택적 보조) `P1`
+- **역할 재정의**: 기존 시스템에서 VLM(Qwen3-VL)은 **필수 경로**였다. 신규 시스템에서 멀티모달 호출은 **보조**다. 사용 모델은 **Gemma4** (`intent_enrich` 역할, Part 5.2.2).
   - 사용 시점 ①: 스냅 정보가 부족한 레거시 임포트(F-14).
   - 사용 시점 ②: F-18 모호성 질문의 **선택지 문구와 후보 생성**.
-  - 사용 시점 ③: 측정 항목 자동 명명 제안.
-- **구현** 출력은 항상 **닫힌 선택지(enum)** 또는 스키마 고정 JSON. 자유 서술 금지. 실패 시 CV 기본값으로 폴백하며 파이프라인은 계속 진행.
+  - 사용 시점 ③: 반복 구조 검출 결과의 육안 확인(F-11), 측정 항목 자동 명명(F-57), 이상치 1차 분류(F-43).
+- **제약 준수** 이미지는 **최대 4장**, 슬롯 배정은 F-64 예산 플래너를 반드시 경유. 대상이 4개를 넘으면 콘택트 시트(F-65)로 압축.
+- **구현** 출력은 항상 **닫힌 선택지(enum)** 또는 스키마 고정 JSON. 자유 서술 금지, **좌표 응답 금지**(F-67). 실패 시 CV 기본값으로 폴백하며 파이프라인은 계속 진행(F-71).
 
-### F-28. Open-Vocabulary Detection (선택) `P2`
-- Grounding DINO 등을 ROI 제안기로 유지하되 **크리티컬 패스에서 제외**. "사람이 말로 영역을 지정하고 싶을 때"의 편의 기능으로 격하.
+### F-28. ~~Open-Vocabulary Detection~~ → 제거 `-`
+- 기존 시스템의 **Grounding DINO는 신규 시스템에서 완전히 제거**한다. 사용 가능한 모델이 Gemma4 / GaussO4.1 두 개로 확정되었고, ROI 지정은 (a) 사용자의 직접 드로잉, (b) 반복 패턴 검출(F-26), (c) 재정위(F-25)로 전부 대체되기 때문이다.
+- "사람이 말로 영역을 지정"하는 편의는 **Gemma4에게 콘택트 시트의 셀 인덱스를 고르게 하는 방식**으로 대체한다 (박스 좌표를 모델에게 받지 않는다).
 
 ### F-29. 이미지 품질/적합성 사전 점검 `P1`
 - 배치 실행 전 각 이미지에 대해: 클래스 존재 여부, 대비, 마스크 결손, 스케일 메타 유무, 회전량 추정 → 부적합 이미지를 사전 배제하고 사유를 리포트.
@@ -606,8 +614,9 @@ meta_tag, component_label, image_name, run_id, note
 - 모든 경로·엔드포인트·모델 ID를 `settings.yaml` + 환경변수로 주입. **코드 내 절대경로·API 키 리터럴 금지**(기존 코드의 `os.environ['OPENAI_API_KEY']='api_key'` 제거).
 - 프로필: `local-gpu`, `local-cpu`, `enterprise-gateway`.
 
-### F-51. 모델 라우터 `P1`
-- 역할별(비전 / 추론·코드 / 경량 분류) 모델을 설정으로 교체. 장애 시 폴백 체인, 토큰·비용·지연 계측, 응답 캐시(동일 MIR 해시 → 캐시 히트).
+### F-51. 모델 라우터 `P0`
+- **Gemma4 / GaussO4.1** 2개 백엔드와 역할(role) 레지스트리를 설정으로 배선. 장애 시 폴백 체인(F-71), 토큰·비용·지연 계측(F-69), 응답 캐시(F-68).
+- 상세 설계는 **Part 5**. 구현 항목은 F-59 ~ F-72.
 
 ### F-52. 패키징 & 배포 `P1`
 - Docker 이미지 2종(app / sandbox-runner), docker-compose, GPU·CPU 프로파일, 헬스체크, 마이그레이션 스크립트.
@@ -643,6 +652,29 @@ meta_tag, component_label, image_name, run_id, note
 
 ### F-58. 키보드 우선 워크플로 & 매크로 `P2`
 - 모든 주요 동작에 단축키. 자주 쓰는 시퀀스(예: "수직 측정선 + 상단 스냅 + 반복 전파")를 매크로로 저장.
+
+---
+
+## H. 모델 API 통합 (F-59 ~ F-72)
+
+Gemma4 / GaussO4.1 전용 전송 계층, reasoning 정책, 구조화 JSON 복구, 그리고 **이미지 4장 · 장당 200MB 제약**을 다루는 기능군이다. 제약이 설계에 직접 영향을 주므로 별도 장으로 분리했다 — **[Part 5](#part-5--모델-api-통합-설계-gemma4--gausso41)** 참조.
+
+| # | 기능 | 우선순위 |
+|---|---|---|
+| F-59 | 모델 백엔드 · 역할 레지스트리 | P0 |
+| F-60 | 게이트웨이 전송 계층 (헤더 · 풀 · 타임아웃 · 429) | P0 |
+| F-61 | Reasoning 제어 정책 (Gemma4 omit / GaussO4.1 effort) | P0 |
+| F-62 | 구조화 JSON 3단 복구 + 스키마 검증 + 부분 재질의 | P0 |
+| F-63 | **이미지 페이로드 파이프라인 (200MB 제약)** | P0 |
+| F-64 | **이미지 슬롯 예산 플래너 (4장 제약)** | P0 |
+| F-65 | **콘택트 시트 합성** (4장 → 4장×N셀 확장) | P0 |
+| F-66 | 다중 호출 맵리듀스 | P1 |
+| F-67 | 이미지 변환 메타 & 좌표 역변환 | P0 |
+| F-68 | 모델 응답 캐시 | P1 |
+| F-69 | 모델 호출 텔레메트리 · 예산 가드 | P1 |
+| F-70 | 프롬프트 · 모델 회귀 스위트 | P1 |
+| F-71 | 폴백 및 열화 정책 (모델 없이도 동작) | P0 |
+| F-72 | 페이로드 보안 · 민감정보 처리 | P2 |
 
 ---
 
@@ -755,7 +787,13 @@ meta_tag, component_label, image_name, run_id, note
 ```jsonc
 { "run_id": "...", "recipe_id": "...", "mir_hash": "...", "plan_hash": "...", "code_hash": "...",
   "image": {"path": "...", "sha256": "..."},
-  "models": {"planner": {"id": "...", "version": "..."}, "vlm": {...}},
+  "models": {
+    "planner":       {"backend": "gausso4_1", "model": "GaussO4.1-...", "reasoning": "medium", "thinking_budget": 1024},
+    "intent_enrich": {"backend": "gemma4",    "model": "Gemma4-...",    "reasoning": null}
+  },
+  "llm_usage": {"calls": 3, "image_calls": 1, "images_sent": 3,
+                "image_bytes_total": 4128332, "prompt_tokens": 18244, "completion_tokens": 3120,
+                "retries": 0, "structured_json": {"primary": 3, "fallback": 0, "repair": 0}},
   "prompt_version": "p/2.3", "ops_version": "1.4.0", "seed": 1234,
   "verification": {"demo_replay": {"endpoint_px": 1.4, "length_err_pct": 0.9, "pass": true},
                    "transfer": {"n": 50, "success_rate": 0.98, "cv_pct": 0.7, "pass": true}},
@@ -764,9 +802,401 @@ meta_tag, component_label, image_name, run_id, note
 
 ---
 
-# Part 5. 구현 계획
+# Part 5. ★ 모델 API 통합 설계 (Gemma4 / GaussO4.1)
 
-## 5.1 기술 스택
+> **전제 (확정 제약)**
+> 1. 사용 가능한 모델은 **Gemma4** 와 **GaussO4.1** **둘 뿐**이다. 기존 저장소가 쓰던 Qwen3-VL(로컬 HF), Grounding DINO, GPT-OSS, Gemma3, Llama-4는 **모두 제거**한다.
+> 2. 두 모델 모두 **멀티모달(이미지 입력) 지원**.
+> 3. **1회 호출당 이미지 최대 4장.**
+> 4. **이미지 1장당 200MB 초과 시 호출 불가.**
+>
+> 호출 방식은 `sy5255/report-search` 저장소의 `app/model_client.py` · `app/config.py` · `app/llm_roles.py` 패턴을 **그대로 계승**한다. 이미 사내 게이트웨이의 특성(헤더 규약, reasoning 파라미터, response_format 미지원, 429 처리, 커넥션 재사용)이 검증되어 있으므로 재발명하지 않는다.
+
+---
+
+## 5.1 참조 구현에서 확정된 사실 (report-search 분석 결과)
+
+`report-search`는 텍스트 전용 RAG이지만, **모델 전송 계층은 그대로 재사용 가능**하다. 분석에서 확인된 계약은 다음과 같다.
+
+### 5.1.1 전송 방식 — OpenAI 호환 SDK
+
+```python
+from openai import OpenAI, DefaultHttpxClient, Timeout
+
+client = OpenAI(
+    base_url=profile.base_url,     # 예: http://api/gausso4-1/v1
+    api_key=profile.api_key,       # 사내 게이트웨이는 "EMPTY" 사용
+    default_headers=_connection_headers(user_id, profile.ticket),
+    timeout=Timeout(connect=10, write=30, pool=10, read=120),
+    http_client=DefaultHttpxClient(timeout=..., limits=..., event_hooks=...),
+)
+client.chat.completions.create(model=..., messages=[...], ...)
+```
+
+### 5.1.2 게이트웨이 헤더 규약
+
+| 헤더 | 성격 | 값 |
+|---|---|---|
+| `Send-System-Name` | 커넥션 고정 | 시스템 식별자 (예: `ScribbleMetro`) |
+| `User-Id` | 커넥션 고정 | 호출 사용자 |
+| `User-Type` | 커넥션 고정 | 사용자 유형 |
+| `x-dep-ticket` | 커넥션 고정 | 부서 티켓 |
+| `Prompt-Msg-Id` | **호출마다 새로 발급** | `uuid4()` |
+| `Completion-Msg-Id` | **호출마다 새로 발급** | `uuid4()` |
+
+> **중요** 커넥션 풀을 캐시하면 트레이스 ID 2종이 프로세스 수명 내내 고정되는 버그가 생긴다. `report-search`는 이를 `_per_request_headers()`를 `extra_headers`로 매 호출 주입해 해결했다. **동일하게 구현한다.**
+
+### 5.1.3 프로바이더 정책 (Provider Policy) — 두 모델의 차이
+
+| 항목 | **Gemma4** | **GaussO4.1** |
+|---|---|---|
+| provider key | `gemma4` | `gausso4_1` |
+| 모델명 판별 | `gemma4 / gemma-4 / gemma_4` 포함 | `gausso4.1 / gausso4-1 / gausso4_1` 포함 |
+| `reasoning_control` | **omit** (reasoning 파라미터를 **보내면 안 됨**) | **explicit** |
+| `reasoning_style` | none | **effort** |
+| `supports_response_format` | **False** | **False** |
+| `token_param` | `max_tokens` | `max_tokens` |
+| `send_temperature` | True | True |
+| `include_reasoning` | — | False (추론 텍스트를 되돌려받지 않음) |
+
+**GaussO4.1 reasoning 전송 규약** (`extra_body`에 실어 보낸다)
+
+```python
+# mode = none  → 이것만 보낸다. thinking budget을 함께 보내면 안 된다.
+extra_body["reasoning_effort"] = "none"
+
+# mode = minimal | medium | high
+extra_body["reasoning_effort"]      = {"minimal": "low", "medium": "medium", "high": "high"}[mode]
+extra_body["thinking_token_budget"] = budget      # 기본 256 / 1024 / 2048
+extra_body["include_reasoning"]     = False
+```
+
+> **주의 (계승할 설계 판단)** `"none"` 은 "적게 생각하기"가 아니라 **추론 패스 자체를 끄는 것**이다. 이때 thinking budget을 함께 보내면 껐다는 의미가 무너진다. Gemma4에는 이 세 파라미터를 **한 개도 보내지 않는다**.
+
+### 5.1.4 `response_format` 미지원 → 구조화 JSON 3단 복구
+
+두 프로바이더 모두 `supports_response_format=False`다. 즉 **JSON Schema 강제(strict)가 불가능**하다. `report-search`의 `create_json_completion()`이 쓰는 3단 복구를 그대로 채택한다.
+
+```
+1차 (primary)   : 역할의 reasoning 모드로 호출 → 본문에서 { ... } 추출 시도
+   ↓ 실패(파싱 오류 또는 빈 본문)
+2차 (fallback)  : reasoning="minimal", response_format 제거,
+                  finish_reason=="length" 였다면 max_tokens 상향 후 재호출
+   ↓ 실패
+3차 (repair)    : json_repair 역할(경량 모델)에게 "깨진 JSON만 고쳐라" 지시
+   ↓ 실패 → StructuredJSONError 발생 (조용한 실패 없음)
+```
+
+- JSON 추출은 `text.find("{") ~ text.rfind("}")` 구간을 `json.loads(strict=False)` 로 파싱.
+- 각 단계는 `structured_json` 텔레메트리 이벤트로 성공/실패가 기록된다.
+
+### 5.1.5 응답 본문 추출 — reasoning 콘텐츠 분리
+
+응답의 `message.content` 는 문자열일 수도, **content parts 배열**일 수도 있다. 배열인 경우 `type` 에 `reason` 또는 `think` 가 포함된 파트는 **본문에서 제외**해야 한다. 본문이 비면 `model_extra` 의 `output_text / final_text / final / text` 순으로 폴백한다. (`extract_message_text()` 그대로 이식)
+
+### 5.1.6 재시도 · 타임아웃 · 커넥션 재사용
+
+- **429만 재시도**한다. `Retry-After` 헤더가 있으면 그 값, 없으면 `min(30, 2**attempt)` 초 대기.
+- 그 외 예외는 즉시 전파(조용한 삼킴 금지). 모든 실패는 `request` 이벤트로 기록.
+- 타임아웃은 4분할: `connect=10s / write=30s / pool=10s / read=120s`. **모델이 생각하는 구간(read)만 길게**.
+- 커넥션 풀은 `(base_url, api_key, ticket, user_id)` 키로 캐시. 한 턴에 십수 회 호출하면서 매번 TLS 핸드셰이크를 하는 낭비를 없앤다.
+- `keepalive_expiry`(기본 5초)를 짧게 잡아 게이트웨이가 먼저 끊은 유휴 커넥션에 써 넣고 read 타임아웃 전체를 날리는 stall을 방지한다.
+
+### 5.1.7 백엔드 / 역할 레지스트리
+
+`report-search`는 **backend(엔드포인트+모델) ↔ role(용도별 토큰·추론 설정)** 을 분리했다. 이 2단 구조를 그대로 쓴다.
+
+```python
+LLM_BACKENDS = {"gemma4": BackendSpec(...), "gausso4_1": BackendSpec(...)}
+LLM_ROLES    = {"planner": RoleSpec(backend="gausso4_1", max_tokens=..., reasoning_mode="medium"), ...}
+```
+
+- 역할별 백엔드는 `<ROLE>_BACKEND` 환경변수로 재정의 가능 → **코드 변경 없이 모델을 바꿔 A/B**할 수 있다.
+- 기동 시 `validate_llm_role_registry()` 로 모든 역할이 실재하는 백엔드를 가리키는지 검증하고, 미설정이면 **즉시 실패**한다(런타임에 조용히 기본값으로 흐르지 않는다).
+
+---
+
+## 5.2 ScribbleMetro의 모델 역할 배치
+
+### 5.2.1 역할 분담 원칙
+
+| | **Gemma4** | **GaussO4.1** |
+|---|---|---|
+| 성격 | 멀티모달 인식 · 빠른 판정 · 경량 구조화 | 추론(reasoning) · 계획 수립 · 코드 논리 |
+| 주 사용처 | **이미지를 보는 모든 작업** | **plan 합성과 수정** |
+| 추론 예산 | 없음(omit) | none/minimal/medium/high 조절 |
+
+> 이 배치는 `report-search`의 판단(런타임 결정은 Gemma4에 집중, 최종 산출은 GaussO4.1)과 동일한 철학이다.
+
+### 5.2.2 역할 레지스트리 (초기값)
+
+| role | backend | reasoning | max_tokens | 이미지 | 설명 |
+|---|---|---|---|---|---|
+| `intent_enrich` | gemma4 | — | 2,000 | ≤4 | 스냅 정보가 부족할 때 의미 보강 (F-27) |
+| `clarify_options` | gemma4 | — | 1,500 | ≤4 | 모호성 선택지 생성 (F-18) |
+| `pattern_verify` | gemma4 | — | 1,000 | ≤4 | 반복 구조 검출 결과 육안 확인 (F-11) |
+| `legacy_import` | gemma4 | — | 3,000 | ≤4 | 레거시 스크리블 PNG 해석 (F-14) |
+| `naming` | gemma4 | — | 500 | 0~1 | 측정 항목 명명 제안 (F-57) |
+| `qc_triage` | gemma4 | — | 1,500 | ≤4 | 이상치 overlay 1차 분류 (F-43) |
+| `planner` | **gausso4_1** | medium | 8,000 | 0~2 | MIR → plan 합성 (F-30) |
+| `plan_repair` | **gausso4_1** | medium | 8,000 | 0~2 | 검증 실패 step 수정 (F-35) |
+| `custom_step` | **gausso4_1** | high | 6,000 | 0 | 연산자로 표현 불가한 로직의 자유 코드 (F-30 탈출구) |
+| `judge` | **gausso4_1** | minimal | 2,000 | ≤4 | Best-of-N 채점 보조 (F-39) |
+| `json_repair` | gemma4 | — | 3,000 | 0 | 깨진 JSON 복구 (5.1.4 3단계) |
+| `readback_polish` | gemma4 | — | 1,000 | 0 | 되읽기 문장 다듬기 (F-17, 선택) |
+
+**의도된 비대칭**: 이미지를 쓰는 역할은 거의 전부 Gemma4다. GaussO4.1은 **MIR(텍스트)만 보고** plan을 짠다. 이렇게 하면
+- 4장 제약이 걸리는 지점이 인식 단계에 국한되고,
+- plan 합성은 이미지 없이 **결정론적이고 캐시 가능**해지며,
+- 가장 비싼 추론 호출에 대용량 페이로드가 실리지 않는다.
+
+---
+
+## 5.3 신규 기능 (F-59 ~ F-72)
+
+### F-59. 모델 백엔드 · 역할 레지스트리 `P0`
+- **무엇** `BackendSpec`(엔드포인트/모델/키/티켓/api_profile) + `RoleSpec`(백엔드/토큰/추론 모드/추론 예산) 2단 레지스트리와 `resolve_role()`.
+- **구현** `platform/llm/backends.py`, `platform/llm/roles.py`. `report-search/app/llm_roles.py` 구조를 그대로 이식하되 역할 목록을 5.2.2로 교체.
+- 기동 시 전체 역할 검증. `sanitized_llm_routing()`(키·티켓 마스킹된 라우팅 덤프)을 `/api/system/llm-routing` 으로 노출해 운영자가 현재 배선을 확인할 수 있게 한다.
+
+### F-60. 게이트웨이 전송 계층 `P0`
+- **무엇** 헤더 규약(5.1.2), 커넥션 풀 캐시, 4분할 타임아웃, 429 전용 재시도, HTTP 이벤트 훅 기반 느린 요청 로깅.
+- **구현** `platform/llm/transport.py` — `report-search/app/model_client.py` 의 `_transport / _connection_headers / _per_request_headers / request_timeout / _connection_limits / _is_rate_limit_error / _retry_after_seconds` 이식.
+- **인수 조건** 20회 연속 호출 시 TCP 핸드셰이크가 1회만 발생(커넥션 재사용 테스트).
+
+### F-61. Reasoning 제어 정책 `P0`
+- **무엇** 프로바이더별 정책 테이블로 reasoning 파라미터 전송 여부/형태를 결정. Gemma4에는 절대 보내지 않고, GaussO4.1에는 5.1.3 규약대로 보낸다.
+- **왜** 이 규약을 어기면 게이트웨이가 요청을 거부하거나(파라미터 미지원) 의도와 다르게 추론이 켜진다.
+- **인수 조건** 프로바이더별 페이로드 스냅샷 테스트(요청 body를 캡처해 키 집합 검증).
+
+### F-62. 구조화 JSON 3단 복구 + 스키마 검증 `P0`
+- **무엇** 5.1.4의 3단 복구 위에 **Pydantic 검증**을 얹는다.
+- **추가 4단계(신규)**: 파싱은 됐지만 **스키마 위반**인 경우 → 전체 재생성이 아니라 **위반 필드만 지목해 부분 재질의**한다.
+  ```
+  "다음 필드만 다시 답하라. steps[2].args.target_class 는
+   ['poly','SiN','oxide'] 중 하나여야 하는데 'dark_layer' 가 왔다."
+  ```
+- **왜** plan/MIR은 스키마가 곧 실행 안전성이다. `response_format` 강제가 불가능한 환경에서 **검증을 우리 쪽에서 두껍게** 가져가야 한다.
+- **인수 조건** 고의로 깨뜨린 응답 10종에 대해 복구 성공률 ≥ 90%, 실패 시 예외가 반드시 전파(무음 실패 0건).
+
+### F-63. ★ 이미지 페이로드 파이프라인 (200MB 제약) `P0`
+
+- **무엇** 어떤 이미지든 **호출 가능한 형태로 안전하게 변환**하고, 변환 정보를 좌표 역변환용으로 보존한다.
+- **처리 순서**
+  1. **디코드** — TIFF/PNG/JPEG. 멀티페이지 TIFF는 대상 페이지만.
+  2. **채널 축소** — 마스크는 8bit 단일 채널로. 16bit는 윈도잉 후 8bit.
+  3. **가시화 렌더** — 클래스 마스크는 그대로 보내면 사람도 모델도 못 읽는다. **팔레트 컬러맵 + 스크리블 오버레이**로 렌더링.
+  4. **리사이즈** — 긴 변 기준 상한(기본 1,536px). **단, 판단용 크롭은 원해상도 유지**(5.4 슬롯 정책).
+  5. **인코딩** — PNG(무손실, 마스크·라인 아트에 유리) 우선, 사진성 원본은 JPEG q85.
+  6. **base64 인코딩**.
+  7. **크기 검사 — 반드시 base64 인코딩 *후* 바이트 수로 검사한다.** base64는 원본 대비 약 **4/3배(≈33% 팽창)** 되므로, 파일 크기로 검사하면 통과했는데 전송에서 초과하는 사고가 난다.
+  8. **초과 시 자동 열화 루프** — 긴 변 상한을 0.75배씩 낮추며 재인코딩(최대 4회) → 그래도 초과하면 **타일 분할**(F-66)로 전환 → 그래도 불가하면 해당 이미지를 슬롯에서 제외하고 provenance에 `image_dropped` 기록.
+- **2단 상한 정책**
+
+  | 상한 | 값 | 성격 |
+  |---|---|---|
+  | **하드 상한** | **200MB** (base64 후) | API 계약. 초과하면 호출 자체가 불가 |
+  | **소프트 상한(운영 기본)** | **장당 6MB, 호출 합계 20MB** | 지연·게이트웨이 타임아웃 방지. 설정으로 조절 |
+
+  > 실무적으로 2048×2048 8bit PNG는 1~3MB이므로 소프트 상한으로 충분하다. 하드 상한은 **대형 스티치 이미지·16bit 원본·멀티페이지 TIFF** 같은 예외를 막는 안전선이다. 200MB를 그대로 쓰면 요청 하나가 read 타임아웃을 넘겨 실패한다 — **크기 제약은 통과해도 시간 제약에서 죽는다**는 점을 설계에 반영한다.
+- **구현** `platform/llm/image_payload.py`. 결과 객체는 `ImagePart{ data_url, bytes, width, height, transform }`.
+
+### F-64. ★ 이미지 슬롯 예산 플래너 (4장 제약) `P0`
+
+- **무엇** "이번 호출에 **어떤 4장**을 보낼 것인가"를 결정하는 **명시적 플래너**. 아무 데서나 이미지를 첨부하는 것을 금지하고, 모든 멀티모달 호출은 이 플래너를 통과한다.
+- **표준 슬롯 배치 (의미 보강 호출 기준)**
+
+  | 슬롯 | 내용 | 해상도 | 목적 |
+  |---|---|---|---|
+  | **1** | 전체 뷰: 마스크 컬러맵 + 스크리블 오버레이 + 격자/스케일바 | 축소(≤1,536px) | 전역 맥락 |
+  | **2** | 관심 영역 **원해상도 크롭** (측정 대상 주변) | 원본 배율 | 세부 판단 |
+  | **3** | **콘택트 시트** — 여러 후보/인스턴스를 격자로 합성 + 인덱스 라벨 (F-65) | 셀별 원해상도 | 다수 항목을 1장으로 |
+  | **4** | 비교 뷰: 선택지 A / B 를 나란히 하이라이트 (모호성 질문용) 또는 원본 그레이 크롭 | 원본 배율 | 대안 대조 |
+
+- **우선순위 규칙**
+  1. 슬롯 1은 항상 포함(맥락 없는 판단 금지).
+  2. 남은 3슬롯은 **신뢰도가 낮은 항목부터** 배정한다(F-16의 confidence 오름차순).
+  3. 4장을 넘는 대상이 있으면 → **콘택트 시트로 압축**(F-65) → 그래도 넘치면 **다중 호출 맵리듀스**(F-66).
+  4. 텍스트만으로 답할 수 있는 역할(`planner`, `custom_step`, `json_repair`)은 **이미지 0장**이 기본값이다.
+- **강제 장치** 전송 계층은 `len(image_parts) > 4` 이면 **요청을 거부**한다(런타임 assert). 조용한 절단 금지 — 어떤 이미지가 빠졌는지 모른 채 모델이 답하는 상황이 가장 위험하다.
+- **구현** `platform/llm/image_budget.py` — `plan_slots(request) -> list[ImagePart]` + 결정 근거를 `slot_plan` 텔레메트리로 기록.
+
+### F-65. ★ 콘택트 시트 합성 (Contact Sheet) `P0`
+
+- **무엇** N개의 ROI/후보를 **격자 한 장**으로 합성하고 각 셀에 `#1 ~ #N` 인덱스와 얇은 테두리를 그린다. 모델에게는 *"각 셀 번호에 대해 답하라"* 고 지시하고, 응답은 셀 인덱스 키를 가진 JSON으로 받는다.
+- **왜** "4장" 제약을 실질적으로 **4장 × 셀 수**로 확장한다. 6개 핑거 검증을 6회 호출이 아니라 **1회 호출**로 끝낸다.
+- **설계 규칙**
+  - 셀당 최소 해상도 보장(기본 ≥256px). 미달하면 시트를 2장으로 분할.
+  - 격자는 **행 우선 순서 고정**, 셀 라벨은 이미지에 직접 렌더(모델이 순서를 헷갈리지 않게).
+  - 셀 ↔ 원본 좌표 매핑을 `transform` 에 보존(F-67).
+  - 응답 스키마: `{"cells": {"1": {...}, "2": {...}}}` — 셀 수와 응답 키 수가 다르면 스키마 위반으로 재질의.
+- **구현** `perception/contact_sheet.py` (OpenCV로 합성).
+
+### F-66. 다중 호출 맵리듀스 `P1`
+- **무엇** 대상이 4슬롯·콘택트 시트로도 안 들어가면, **결정론적으로 배치를 나눠 여러 번 호출**하고 결과를 병합한다.
+- **규칙**
+  - 분할은 **인덱스 순서 고정**(재현성). 배치 크기는 설정값.
+  - 각 배치는 **독립적으로 유효한 프롬프트**여야 한다(맥락 슬롯 1은 매 배치에 재첨부).
+  - 병합은 결정론적: 인덱스 키로 dict 병합, 충돌 시 신뢰도 높은 쪽 채택 후 충돌 로그 기록.
+  - 배치 간 **일관성 검사**: 동일 대상이 두 배치에 겹쳐 들어가면 답이 같은지 확인(불일치 시 F-18 모호성 질문으로 승격).
+- **구현** `platform/llm/map_reduce.py`.
+
+### F-67. 이미지 변환 메타 & 좌표 역변환 `P0`
+- **무엇** 크롭·리사이즈·시트 합성으로 좌표계가 바뀌므로, 모든 `ImagePart`에 변환 메타를 동봉한다.
+  ```json
+  { "source_image": "C2024_x_gray.tif",
+    "crop": [512, 300, 640, 640], "scale": 0.75,
+    "sheet_cell": {"index": 3, "origin": [256, 0]},
+    "to_source": "affine 2x3 행렬" }
+  ```
+- **왜** 기존 시스템이 `_rescale_endpoints_to_original()` 로 뒤늦게 처리하던 문제를 **구조적으로 봉쇄**한다.
+- **정책** 신규 시스템은 **모델에게 좌표를 묻지 않는 것을 원칙**으로 한다(좌표는 CV와 스냅이 담당). 그럼에도 모델이 좌표를 반환하는 경우(예: 셀 내 대략적 위치 지목)에는 **반드시 역변환을 통과**해야 MIR에 들어갈 수 있다.
+
+### F-68. 모델 응답 캐시 `P1`
+- **키** `(role, backend, model, prompt_hash, image_content_hashes, reasoning_mode, max_tokens)`.
+- **왜** 같은 이미지·같은 질문의 재호출은 개발/디버깅 중 대량 발생한다. VLM 호출이 가장 비싸므로 캐시 효과가 크다.
+- **정책** plan 생성 캐시는 **MIR 해시 기준**이므로, 사용자가 의도를 고치면 자동 무효화된다. 캐시 히트/미스는 텔레메트리에 기록하고, `?no_cache=1` 로 우회 가능.
+
+### F-69. 모델 호출 텔레메트리 · 예산 `P1`
+- **기록 항목** role, backend, provider, model, 요청 이미지 수/총 바이트, prompt/completion 토큰, `finish_reason`, `open_ms`(요청 수락~헤더 수신), 총 지연, 재시도 횟수, rate-limited 여부, structured-json 단계별 성공.
+- **예산 가드** 레시피 1건 생성당 **호출 수 / 이미지 장수 / 총 토큰** 상한을 두고, 초과 시 작업을 중단하고 사람에게 보고한다(무한 재시도 루프 금지).
+- **목표 예산 (레시피 1건, 정상 경로)**
+
+  | 단계 | 호출 | 이미지 | 비고 |
+  |---|---|---|---|
+  | 의미 보강(선택) | 0~1 | ≤4 | 스냅이 충분하면 **0회** |
+  | 모호성 선택지 | 0~1 | ≤4 | 모호할 때만 |
+  | plan 합성 | 1 | 0 | 텍스트만 |
+  | plan 수정 | 0~2 | 0 | 검증 실패 시 |
+  | **합계** | **1~5회** | **0~8장** | |
+
+  > 기존 시스템은 VLM 1회 + DINO N회 + 코드생성 1~2회 + 자동수정 최대 5회로 **최대 9회 이상**, 그중 상당수가 대용량 이미지 호출이었다. 신규 설계는 **정상 경로에서 이미지 호출 0~2회**를 목표로 한다.
+
+### F-70. 프롬프트 · 모델 회귀 스위트 `P1`
+- 프롬프트나 모델(Gemma4→차기 버전 등)을 바꿀 때 **B4 회귀 세트**(Part 7.1)를 자동 실행해 이전 대비 성능 변화를 리포트.
+- 모든 프롬프트에 버전(`p/2.3`)을 부여하고 `run.json`에 기록(F-46) → 어떤 프롬프트가 어떤 결과를 냈는지 사후 추적 가능.
+
+### F-71. 폴백 및 열화 정책 `P0`
+- **모델 장애 시**
+  1. Gemma4 실패 → 동일 역할을 GaussO4.1로 1회 재시도(멀티모달 지원되므로 대체 가능).
+  2. GaussO4.1 실패 → `planner`는 **재시도 후 중단**. 잘못된 plan을 만드느니 멈춘다.
+  3. 둘 다 불가 → **CV + 스냅만으로 MIR 확정**하고, plan은 **템플릿 기반 결정론 합성**(단순 거리 측정 등 표준 패턴만)으로 축약 생성. 사용자에게 "AI 보강 없이 생성됨"을 명시.
+- **원칙** 모델 장애가 **드로잉과 스냅을 막지 않는다.** 캔버스·스냅·패턴검출·연산자 실행은 전부 로컬 CV이므로 오프라인에서도 동작해야 한다. 모델은 **가속기이지 필수 부품이 아니다.**
+
+### F-72. 페이로드 보안 · 민감정보 처리 `P2`
+- 로그에 **base64 이미지 본문을 절대 남기지 않는다**(해시와 바이트 수만).
+- 이미지에 웨이퍼 ID/로트 번호 등이 렌더링되어 있으면 전송 전 마스킹하는 옵션.
+- API 키·티켓은 환경변수. 라우팅 덤프는 항상 마스킹.
+- 외부 전송 여부(사내 게이트웨이 vs 외부망)를 설정에 명시하고, 외부일 경우 이미지 전송을 기본 차단.
+
+---
+
+## 5.4 멀티모달 프롬프트 규약
+
+### 5.4.1 메시지 형태
+
+```python
+messages = [
+  {"role": "system", "content": SYSTEM_RULES},   # 역할별 고정, 짧게
+  {"role": "user", "content": [
+      {"type": "text",      "text": task_text},              # 지시 + 슬롯 설명
+      {"type": "image_url", "image_url": {"url": slot1_data_url}},
+      {"type": "image_url", "image_url": {"url": slot2_data_url}},
+      {"type": "image_url", "image_url": {"url": slot3_data_url}},
+      {"type": "image_url", "image_url": {"url": slot4_data_url}},
+      {"type": "text",      "text": OUTPUT_SCHEMA_TEXT},     # 출력 스키마를 이미지 뒤에 재확인
+  ]},
+]
+```
+
+**규칙**
+1. **텍스트로 슬롯을 반드시 명명한다.** *"이미지 1은 전체 뷰, 이미지 2는 #3 핑거의 원해상도 크롭, 이미지 3은 6개 후보 콘택트 시트다."* — 모델이 몇 번째 이미지인지 헷갈리는 것이 멀티모달 오류의 최대 원인이다.
+2. **출력 스키마를 이미지 뒤에 한 번 더 붙인다.** 긴 이미지 블록 뒤에 지시가 희석되는 것을 막는다.
+3. **닫힌 선택지를 쓴다.** 자유 서술 대신 enum·boolean·인덱스. `response_format` 강제가 불가능한 만큼 프롬프트로 좁힌다.
+4. **좌표를 묻지 않는다.** 위치가 필요하면 콘택트 시트의 **셀 인덱스**나 후보 ID로 답하게 한다.
+5. **프롬프트는 파일로 버전 관리**한다(`prompts/<role>/<version>.md`). 코드 안 f-string에 흩어두지 않는다 — 기존 시스템의 수백 줄 인라인 프롬프트가 유지보수 불가능해진 원인이다.
+
+### 5.4.2 시스템 프롬프트 최소주의
+
+기존 시스템은 코드 생성 규칙 수백 줄을 프롬프트에 넣었다. 신규 시스템은 **Plan→Code 구조(F-30)** 덕분에 그 규칙 대부분이 불필요하다.
+
+| 기존 프롬프트 규칙 | 신규 시스템에서의 처리 |
+|---|---|
+| "def로 정의 안 된 함수 호출 금지" | plan 검증기가 미등록 연산자를 거부 |
+| "`np.where`는 (y,x), `fitLine`은 (x,y)" | 연산자 라이브러리가 내부에서 한 번만 올바르게 처리 |
+| "numpy 스칼라를 JSON에 넣지 마라" | 연산자 반환 타입이 `float`/`int`로 고정 |
+| "CSV 표준 헤더를 써라" | 렌더러가 헤더를 생성 |
+| "merge 이미지를 읽지 마라" | 정적 검증 게이트(F-33) |
+| "SDIFF 값이 우선, 예제 상수 무시" | plan에 값이 명시되므로 충돌 자체가 없음 |
+
+→ **planner 시스템 프롬프트 목표 길이: 60줄 이내.** 연산자 카탈로그(기계 생성)를 별도 메시지로 첨부한다.
+
+---
+
+## 5.5 구현 체크리스트
+
+- [ ] `platform/llm/` 패키지 생성 (`backends / roles / transport / policy / structured / image_payload / image_budget / map_reduce / cache / telemetry`)
+- [ ] `report-search`의 `model_client.py` 이식 — 텍스트 경로는 **동작 동등성 테스트**로 검증
+- [ ] 멀티모달 확장: content parts 조립, 4장 강제, 200MB/소프트 상한 검사
+- [ ] 프로바이더 정책 테이블에 `gemma4`, `gausso4_1` 만 등록 (`gpt_oss`/`openai_compat`는 테스트용으로만)
+- [ ] 역할 레지스트리 5.2.2로 구성 + 기동 시 검증
+- [ ] 프롬프트 디렉터리 + 버전 관리
+- [ ] 테스트: 프로바이더 페이로드 스냅샷 / JSON 3단 복구 / 429 재시도 / 커넥션 재사용 / **이미지 4장 초과 거부** / **base64 후 크기 검사** / 콘택트 시트 좌표 역변환 / 맵리듀스 병합 결정론성
+- [ ] `.env.example` 작성 (아래)
+
+```bash
+# --- 공통 게이트웨이 ---
+SEND_SYSTEM_NAME=ScribbleMetro
+USER_ID=
+USER_TYPE=
+
+# --- Gemma4 (멀티모달 인식) ---
+GEMMA4_LLM_MODEL=
+GEMMA4_LLM_BASE_URL=
+GEMMA4_LLM_API_KEY=EMPTY
+GEMMA4_LLM_TICKET=
+GEMMA4_LLM_API_PROFILE=gemma4
+
+# --- GaussO4.1 (추론/계획) ---
+GAUSSO4_1_LLM_MODEL=
+GAUSSO4_1_LLM_BASE_URL=
+GAUSSO4_1_LLM_API_KEY=EMPTY
+GAUSSO4_1_LLM_TICKET=
+GAUSSO4_1_LLM_API_PROFILE=gausso4_1
+
+# --- 역할 라우팅 (기본값 재정의용) ---
+PLANNER_BACKEND=gausso4_1
+INTENT_ENRICH_BACKEND=gemma4
+JSON_REPAIR_BACKEND=gemma4
+
+# --- 추론 예산 ---
+LLM_DEFAULT_REASONING=minimal
+LLM_THINKING_BUDGET_LOW=256
+LLM_THINKING_BUDGET_MEDIUM=1024
+LLM_THINKING_BUDGET_HIGH=2048
+
+# --- 전송 ---
+LLM_CONNECT_TIMEOUT=10
+LLM_WRITE_TIMEOUT=30
+LLM_POOL_TIMEOUT=10
+LLM_REQUEST_TIMEOUT=120
+LLM_KEEPALIVE_EXPIRY_SECONDS=5
+LLM_TRANSPORT_CACHE=on
+
+# --- 이미지 제약 ---
+LLM_MAX_IMAGES_PER_CALL=4          # 하드 제약. 초과 시 요청 거부
+LLM_IMAGE_HARD_LIMIT_MB=200        # API 계약 상한 (base64 인코딩 후 기준)
+LLM_IMAGE_SOFT_LIMIT_MB=6          # 운영 권장 장당 상한
+LLM_IMAGE_TOTAL_SOFT_LIMIT_MB=20   # 호출 합계 권장 상한
+LLM_IMAGE_MAX_LONG_SIDE=1536       # 전체 뷰 리사이즈 상한 (크롭은 원해상도 유지)
+LLM_CONTACT_SHEET_MIN_CELL_PX=256
+```
+
+---
+
+# Part 6. 구현 계획
+
+## 6.1 기술 스택
 
 | 영역 | 선택 | 이유 |
 |---|---|---|
@@ -779,9 +1209,11 @@ meta_tag, component_label, image_name, run_id, note
 | 코드 검증 | `ast`, `libcst`, `ruff`, `black` | 정적 게이트 |
 | 테스트 | pytest, playwright(E2E) | 연산자 단위 테스트가 시스템 신뢰의 기반 |
 | 실행 격리 | Docker(sandbox-runner) 또는 rlimit+격리유저 | 생성 코드 실행 안전 |
-| 모델 | VLM(Qwen3-VL급) / 코드·추론 LLM(사내 게이트웨이 또는 API) | 라우터로 교체 가능 |
+| 모델 | **Gemma4** (멀티모달 인식) / **GaussO4.1** (추론·계획) — 사내 OpenAI 호환 게이트웨이 | 사용 가능한 2종으로 확정. 상세 Part 5 |
+| 모델 SDK | `openai` (OpenAI 호환) + `httpx` 커넥션 풀 | `report-search/app/model_client.py` 패턴 이식 |
+| 이미지 페이로드 | OpenCV + Pillow → PNG/JPEG → base64 data URL | 4장·200MB 제약 준수 (F-63/F-64) |
 
-## 5.2 패키지 구조
+## 6.2 패키지 구조
 
 ```
 scribblemetro/
@@ -799,21 +1231,34 @@ scribblemetro/
 │   ├── execution/           # 샌드박스, 배치 러너, 아티팩트 수집
 │   ├── verification/        # demo replay, transfer, 민감도, QC 룰
 │   ├── knowledge/           # 레시피/few-shot 저장소, 검색, ops 승격
-│   └── platform/            # 설정, DB, 큐, 모델 라우터, 로깅
+│   └── platform/            # 설정, DB, 큐, 로깅
+│       └── llm/             # ★ 모델 API 계층 (Part 5)
+│           ├── backends.py      # BackendSpec: gemma4 / gausso4_1
+│           ├── roles.py         # RoleSpec + resolve_role + 기동 검증
+│           ├── policy.py        # ProviderPolicy (reasoning/response_format/token param)
+│           ├── transport.py     # OpenAI 클라이언트, 헤더, 풀 캐시, 타임아웃, 429 재시도
+│           ├── structured.py    # JSON 3단 복구 + Pydantic 스키마 검증 + 부분 재질의
+│           ├── image_payload.py # 리사이즈/인코딩/base64/200MB 검사/변환 메타
+│           ├── image_budget.py  # 4장 슬롯 예산 플래너
+│           ├── contact_sheet.py # 격자 합성 (perception과 공용)
+│           ├── map_reduce.py    # 4장 초과 시 배치 분할·병합
+│           ├── cache.py         # 응답 캐시
+│           └── telemetry.py     # 호출 계측 · 예산 가드
 ├── templates/               # measure.py Jinja 템플릿
 ├── benchmarks/              # 평가 데이터셋 + 회귀 스위트
 └── deploy/                  # Docker, compose, migrations
 ```
 
-## 5.3 마일스톤
+## 6.3 마일스톤
 
 > 인원 가정: 백엔드 1.5 · 프런트 1 · CV/ML 1 (총 3~4인). 기간은 목표치.
 
 ### M0 — 기반 정비 (2주)
 - 리포지토리 재구성, 설정/시크릿 외부화, DB 스키마, 작업 큐, 로깅.
 - **기존 코드 이관**: 스크리블 CV 추출, meta 로더, CSV 정규화, few-shot 저장소, 전이 평가 스크립트를 각 패키지로 분해 이식.
-- 산출: 빈 화면이지만 이미지 목록/뷰가 뜨고 배치 잡이 큐를 통해 돈다.
-- 관련: F-48, F-49, F-50, F-14
+- **★ 모델 API 계층 구축 (Part 5)**: `report-search/app/model_client.py` 패턴 이식 → Gemma4/GaussO4.1 백엔드·역할 레지스트리, 전송 계층, reasoning 정책, JSON 3단 복구, **이미지 페이로드 파이프라인(200MB) + 4장 슬롯 플래너**. 이 시점에 두 모델 엔드포인트로 **왕복 스모크 테스트**를 통과시켜 둔다(뒤 마일스톤이 전부 여기에 의존한다).
+- 산출: 빈 화면이지만 이미지 목록/뷰가 뜨고 배치 잡이 큐를 통해 돌며, 두 모델에 이미지 첨부 호출이 성공한다.
+- 관련: F-48, F-49, F-50, F-14, **F-59~F-64, F-67, F-71**
 
 ### M1 — 드로잉 캔버스 MVP (3주)
 - F-01, F-02, F-03, F-04, F-05 + F-06(스냅 1차: 경계·특징점·기존 선).
@@ -839,12 +1284,13 @@ scribblemetro/
 - **인수 조건**: 폴더 단위 운영이 가능하고, 사람이 검토할 항목만 큐에 올라온다.
 
 ### M6 — 품질 고도화 (지속)
-- F-38(민감도), F-39(Best-of-N), F-24(서브픽셀), F-32(구조 유사도 검색), F-41(ops 승격), F-19(대화형 편집), F-21(클래스 사전), F-40(레시피 카드), F-51~F-54.
+- F-38(민감도), F-39(Best-of-N), F-24(서브픽셀), F-32(구조 유사도 검색), F-41(ops 승격), F-19(대화형 편집), F-21(클래스 사전), F-40(레시피 카드), F-52~F-54.
+- 모델 계층 고도화: F-65(콘택트 시트 최적화), F-66(맵리듀스), F-68(캐시), F-69(예산 가드), F-70(프롬프트 회귀 스위트), F-72(페이로드 보안).
 - 벤치마크 확장 및 프롬프트/모델 회귀 테스트 정착.
 
-**총 소요: 약 18주 (M0~M5) + 지속 개선**
+**총 소요: 약 18주 (M0~M5) + 지속 개선** — M0가 2주에서 3주로 늘어날 수 있다(모델 API 계층 포함). 다만 이 투자는 M2 이후 모든 마일스톤이 재사용하므로 회수된다.
 
-## 5.4 병렬화 및 의존성
+## 6.4 병렬화 및 의존성
 
 ```
 M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 ── M5
@@ -852,19 +1298,21 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
                                    └─ perception(재정위/패턴)은 M2와 병행 착수 가능
 ```
 - `metro_ops`(F-23)는 프런트와 무관하므로 **M0 직후 즉시 병행 착수**한다. 이것이 M3의 임계 경로다.
+- `platform/llm`(F-59~F-64)도 프런트와 무관하다. **M0에서 끝내 두는 것이 원칙**이며, 늦어도 M2 시작 전에는 완료되어야 F-18(모호성 질문)과 F-27(의미 보강)이 막히지 않는다.
 - 연산자 라이브러리가 두꺼울수록 Planner가 쉬워진다 → **초기 투자 대비 회수율이 가장 높은 항목**.
 
 ---
 
-# Part 6. 평가 체계와 완료 기준
+# Part 7. 평가 체계와 완료 기준
 
-## 6.1 벤치마크 구성
+## 7.1 벤치마크 구성
 - **B1 시연 세트**: 대표 공정 20종 × 이미지 1장 + 사람이 그린 정답 스크리블 + 정답 측정값.
 - **B2 전이 세트**: 각 공정당 실이미지 10~30장(시연에 쓰지 않은 것) + 정답 측정값.
 - **B3 스트레스 세트**: augmentation 자동 생성(시드 고정) + 저품질/결손 마스크 포함.
 - **B4 회귀 세트**: 과거 실패 사례 아카이브(모델·프롬프트 변경 시 반드시 통과).
+- **B5 모델 계약 세트**: 프로바이더별 요청 페이로드 스냅샷, 깨진 JSON 응답 10종, 429/타임아웃 주입, 초대형 이미지(>200MB 원본) 및 5장 첨부 시도 — **모델을 실제로 호출하지 않고** 전송 계층만 검증하는 오프라인 스위트.
 
-## 6.2 KPI
+## 7.2 KPI
 
 | # | 지표 | 목표 | 측정 |
 |---|---|---|---|
@@ -878,8 +1326,13 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | K8 | 자동 수정 루프 평균 반복 | ≤ 1.2회 | F-35 로그 |
 | K9 | 조용한 오측정률 | 0% (모든 이상은 반드시 플래그) | F-43 |
 | K10 | 재현성 | 동일 매니페스트 → 100% 동일 결과 | F-46 |
+| K11 | **레시피 1건당 모델 호출 수** | ≤ 5회 (이미지 호출 ≤ 2회) | F-69 예산 계측 |
+| K12 | **이미지 제약 위반** | 0건 (4장 초과 / 200MB 초과 요청이 전송되지 않음) | 전송 계층 assert + 테스트 |
+| K13 | **구조화 JSON 최종 성공률** | ≥ 99% (3단 복구 + 부분 재질의 포함) | F-62 `structured_json` 이벤트 |
+| K14 | **모델 장애 시 열화 동작** | 드로잉·스냅·측정 실행 100% 정상 | F-71 장애 주입 테스트 |
+| K15 | 커넥션 재사용률 | 연속 20회 호출 시 TLS 핸드셰이크 1회 | F-60 |
 
-## 6.3 릴리스 게이트
+## 7.3 릴리스 게이트
 1. **Draft** — MIR 검증 통과.
 2. **Generated** — 정적검증 + 실행 성공.
 3. **Verified** — 시연 재현 통과 + 전이 통과. *여기서부터 배치 실행 허용.*
@@ -887,7 +1340,7 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 
 ---
 
-# Part 7. 리스크와 대응
+# Part 8. 리스크와 대응
 
 | 리스크 | 영향 | 대응 |
 |---|---|---|
@@ -899,6 +1352,12 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | GPU 자원 경합(VLM) | 중간 | VLM을 크리티컬 패스에서 제외(F-27). 큐 우선순위 분리 |
 | 기존 자산(수백 개 스크리블/코드) 사장 | 중간 | F-14 임포터 + 기존 CSV 스키마 유지 + few-shot 코퍼스 이관 |
 | 사람의 신뢰 확보 실패("AI가 잰 값을 못 믿겠다") | 높음 | 되읽기(F-17) + 재현 검증 수치(F-36) + 레시피 카드(F-40) + provenance 배지. **설명 가능성을 UI의 기본값으로** |
+| **이미지 4장 제약으로 판단 정보가 부족** | 높음 | 콘택트 시트(F-65)로 4장×N셀 확장, 맵리듀스(F-66)로 배치 분할. 근본적으로는 **스냅이 의도를 잡으므로 모델이 볼 것이 적다**(F-06) |
+| **200MB / 게이트웨이 타임아웃** | 중간 | base64 **인코딩 후** 크기 검사, 소프트 상한(장당 6MB)으로 지연 억제, 초과 시 단계적 열화 후 타일 분할 (F-63) |
+| **`response_format` 미지원 → JSON 파싱 실패** | 높음 | 3단 복구 + Pydantic 검증 + **위반 필드 부분 재질의**(F-62). 최종 실패는 예외로 전파하고 절대 조용히 넘기지 않음 |
+| **Gemma4/GaussO4.1 파라미터 규약 변경** | 중간 | 규약을 `ProviderPolicy` 테이블 1곳에 집중(F-61). 페이로드 스냅샷 테스트(B5)가 회귀를 즉시 잡음 |
+| **모델 엔드포인트 장애·정원 초과** | 중간 | 429 전용 재시도 + Retry-After 준수, 역할별 폴백(Gemma4↔GaussO4.1), 최종적으로 CV-only 열화 경로(F-71) |
+| **모델 교체/버전업 시 품질 회귀** | 중간 | 역할↔백엔드가 환경변수로 분리되어 A/B 가능(F-59) + B4/B5 회귀 스위트 자동 실행(F-70) |
 
 ---
 
@@ -926,6 +1385,9 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | GET/POST | `/api/recipes` | 레시피 레지스트리 (F-47) |
 | POST | `/api/reviews` | 리뷰 수정 환류 (F-45) |
 | GET/POST | `/api/ops` | 연산자 레지스트리 / 승격 (F-41) |
+| GET | `/api/system/llm-routing` | 현재 백엔드·역할 배선 확인 (키/티켓 마스킹, F-59) |
+| GET | `/api/system/llm-budget` | 레시피별 모델 호출·이미지·토큰 사용량 (F-69) |
+| POST | `/api/vlm/enrich` | Gemma4 의미 보강 (내부용, 슬롯 플래너 경유, F-27) |
 
 ## A.2 기존 → 신규 매핑
 
@@ -940,6 +1402,15 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 | `validation/transfer_reliability_eval.py` | `/api/verify/transfer` (F-37) |
 | `_reject_merge_copying` | F-33 정적 검증 게이트의 한 규칙 |
 | `_normalize_measurements_csv` | 렌더러가 스키마를 보장 + 실행 후 검증 |
+| `_lazy_load_qwen()` (로컬 Qwen3-VL) | **삭제.** Gemma4 게이트웨이 호출로 대체 (`intent_enrich` 역할) |
+| `_lazy_load_dino()` / `_call_grounding_dino()` | **삭제.** 반복 패턴 검출(F-26) + 재정위(F-25) + 사용자 드로잉으로 대체 |
+| `_build_gptoss()` / `_build_gausso()` / `_build_llm_for()` | `platform/llm` 의 `make_role_client(user_id, role)` 로 통합 |
+| `_safe_invoke_gptoss_for_code*()` | `synthesis.planner` (GaussO4.1) + 결정론적 렌더러 |
+| `_extract_text_from_aimessage()` | `extract_message_text()` (reasoning 파트 분리 포함) |
+| `MAX_IMAGES_PER_PROMPT = 5` (상수만 존재) | **F-64 슬롯 예산 플래너 + 전송 계층 강제(4장 초과 요청 거부)** |
+| `_prep_for_vision_llm()` (max_side 1280, JPEG q80) | F-63 이미지 페이로드 파이프라인 (변환 메타 보존 + base64 후 크기 검사) |
+| `_rescale_endpoints_to_original()` | F-67 변환 메타 기반 역변환 (원칙적으로 모델에게 좌표를 묻지 않음) |
+| 인라인 수백 줄 시스템 프롬프트 | `prompts/<role>/<version>.md` 파일 + Plan→Code 구조로 규칙 대부분 불필요 (Part 5.4.2) |
 
 ## A.3 마이그레이션 전략
 
@@ -947,9 +1418,13 @@ M0 ──┬── M1 (프런트) ────┬── M2 ── M3 ── M4 �
 2. **CSV 스키마 동결** — 다운스트림 도구 보호를 위해 13개 표준 컬럼을 그대로 유지, 확장은 추가 컬럼으로만.
 3. **병행 운영 기간** — 신규 시스템이 생성한 코드와 기존 시스템 코드를 같은 이미지에 돌려 값 차이를 비교(회귀 리포트). 차이가 임계 이내일 때 전환.
 4. **연산자 커버리지 선검증** — 착수 직후, 기존 `measure_label/`의 실제 코드 20~30개를 읽어 **어떤 연산이 실제로 쓰였는지 목록화**하고, 그것을 `metro_ops` v1의 스펙으로 삼는다. (설계 리스크를 가장 크게 줄이는 첫 작업)
+5. **모델 전환 검증** — `report-search`의 전송 계층을 이식한 직후, Gemma4·GaussO4.1 두 엔드포인트에 대해 (a) 텍스트 왕복, (b) 이미지 1장 왕복, (c) 이미지 4장 왕복, (d) 5장 시도 시 거부, (e) 200MB 초과 이미지 자동 열화를 **스모크 테스트로 확인**한다. 이 5개가 통과하기 전에는 상위 기능 개발을 시작하지 않는다.
+6. **GPU 반납** — 로컬 Qwen3-VL / Grounding DINO 제거로 `CUDA_VISIBLE_DEVICES=0,1,2` 상주 점유가 사라진다. 남는 GPU 자원은 배치 실행(F-42)과 전이 검증(F-37) 병렬화에 재배치한다.
 
 ---
 
 ## 마무리 — 이 계획의 한 문장
 
 기존 시스템은 **"그려진 그림에서 의도를 되찾으려" 애썼다.** 신규 시스템은 **"그리는 순간에 의도를 함께 붙잡고", 그것을 검증 가능한 명세로 확정한 뒤, 검증된 연산자만으로 코드를 조립하고, 사람이 그린 것을 실제로 재현하는지 스스로 확인한다.** 나머지 기능은 모두 이 한 줄을 빠르고, 정확하고, 믿을 수 있게 만들기 위한 장치다.
+
+그리고 모델 측면에서 이 전환은 **의존을 줄이는 방향**이다. 사용 가능한 모델이 Gemma4·GaussO4.1 둘뿐이고 한 번에 이미지 4장까지만 보낼 수 있다는 제약은, 역설적으로 이 설계와 잘 맞는다. 의도를 그리는 순간에 붙잡아 두면 **모델에게 보여줄 것이 애초에 적기 때문**이다. 기존 시스템은 이미지 3장을 매번 VLM에 밀어 넣고 그 안에서 의미를 찾아내야 했지만, 신규 시스템의 정상 경로에서는 이미지 호출이 **0~2회**에 그친다.
